@@ -1,0 +1,113 @@
+---
+version: 1.4.0
+title: Generate optional fields
+file: ./test/codegen_test.gleam
+test_name: generate_optional_fields_test
+---
+import gleam/option.{type Option, None, Some}
+import gloto/wire
+import gloto/decode
+import gloto/encode
+
+
+
+pub type OptionalFields {
+  OptionalFields(
+  required_name: String,
+  nickname: Option(String),
+  age: Option(Int),
+  active: Option(Bool),
+  nested: Option(NestedOptional)
+  )
+}
+
+pub type NestedOptional {
+  NestedOptional(
+  value: Option(String)
+  )
+}
+
+pub fn encode_optionalfields(optionalfields: OptionalFields) -> BitArray {
+  encode.message([
+    encode.string_field(1, optionalfields.required_name),
+    case optionalfields.nickname {
+        Some(value) -> encode.string_field(2, value)
+        None -> <<>>
+      },
+    case optionalfields.age {
+        Some(value) -> encode.int32_field(3, value)
+        None -> <<>>
+      },
+    case optionalfields.active {
+        Some(value) -> encode.bool_field(4, value)
+        None -> <<>>
+      },
+    case optionalfields.nested {
+        Some(value) -> encode.field(5, wire.LengthDelimited, encode.length_delimited(encode_nestedoptional(value)))
+        None -> <<>>
+      }
+  ])
+}
+
+pub fn encode_nestedoptional(nestedoptional: NestedOptional) -> BitArray {
+  encode.message([
+    case nestedoptional.value {
+        Some(value) -> encode.string_field(1, value)
+        None -> <<>>
+      }
+  ])
+}
+
+pub fn optionalfields_decoder() -> decode.Decoder(OptionalFields) {
+  use required_name <- decode.subrecord(decode.string_with_default(1, ""))
+  use nickname <- decode.subrecord(decode.optional_field(2, decode.string_field)
+      |> decode.map(fn(opt) {
+        case opt {
+          Ok(value) -> Some(value)
+          Error(Nil) -> None
+        }
+      }))
+  use age <- decode.subrecord(decode.optional_field(3, decode.int32_field)
+      |> decode.map(fn(opt) {
+        case opt {
+          Ok(value) -> Some(value)
+          Error(Nil) -> None
+        }
+      }))
+  use active <- decode.subrecord(decode.optional_field(4, decode.bool_field)
+      |> decode.map(fn(opt) {
+        case opt {
+          Ok(value) -> Some(value)
+          Error(Nil) -> None
+        }
+      }))
+  use nested <- decode.subrecord(decode.optional_nested_message(5, nestedoptional_decoder())
+      |> decode.map(fn(opt) {
+        case opt {
+          Ok(value) -> Some(value)
+          Error(Nil) -> None
+        }
+      }))
+  decode.success(OptionalFields(required_name: required_name, nickname: nickname, age: age, active: active, nested: nested))
+}
+
+pub fn decode_optionalfields(data: BitArray) -> Result(OptionalFields, decode.DecodeError) {
+  decode.decode(data, optionalfields_decoder())
+}
+
+pub fn nestedoptional_decoder() -> decode.Decoder(NestedOptional) {
+  use value <- decode.subrecord(decode.optional_field(1, decode.string_field)
+      |> decode.map(fn(opt) {
+        case opt {
+          Ok(value) -> Some(value)
+          Error(Nil) -> None
+        }
+      }))
+  decode.success(NestedOptional(value: value))
+}
+
+pub fn decode_nestedoptional(data: BitArray) -> Result(NestedOptional, decode.DecodeError) {
+  decode.decode(data, nestedoptional_decoder())
+}
+
+

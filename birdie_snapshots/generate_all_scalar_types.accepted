@@ -1,0 +1,76 @@
+---
+version: 1.4.0
+title: Generate all scalar types
+file: ./test/codegen_test.gleam
+test_name: generate_all_scalar_types_test
+---
+import gloto/wire
+import gloto/decode
+import gloto/encode
+
+
+
+pub type AllScalarTypes {
+  AllScalarTypes(
+  double_field: Float,
+  float_field: Float,
+  int32_field: Int,
+  int64_field: Int,
+  uint32_field: Int,
+  uint64_field: Int,
+  sint32_field: Int,
+  sint64_field: Int,
+  fixed32_field: Int,
+  fixed64_field: Int,
+  sfixed32_field: Int,
+  sfixed64_field: Int,
+  bool_field: Bool,
+  string_field: String,
+  bytes_field: BitArray
+  )
+}
+
+pub fn encode_allscalartypes(allscalartypes: AllScalarTypes) -> BitArray {
+  encode.message([
+    encode.double_field(1, allscalartypes.double_field),
+    encode.float_field(2, allscalartypes.float_field),
+    encode.int32_field(3, allscalartypes.int32_field),
+    encode.int64_field(4, allscalartypes.int64_field),
+    encode.uint32_field(5, allscalartypes.uint32_field),
+    encode.uint64_field(6, allscalartypes.uint64_field),
+    encode.sint32_field(7, allscalartypes.sint32_field),
+    encode.sint64_field(8, allscalartypes.sint64_field),
+    // TODO: Unsupported type,
+    // TODO: Unsupported type,
+    // TODO: Unsupported type,
+    // TODO: Unsupported type,
+    encode.bool_field(13, allscalartypes.bool_field),
+    encode.string_field(14, allscalartypes.string_field),
+    encode.field(15, wire.LengthDelimited, encode.length_delimited(allscalartypes.bytes_field))
+  ])
+}
+
+pub fn allscalartypes_decoder() -> decode.Decoder(AllScalarTypes) {
+  use double_field <- decode.subrecord(decode.double(1))
+  use float_field <- decode.subrecord(decode.float(2))
+  use int32_field <- decode.subrecord(decode.int32_with_default(3, 0))
+  use int64_field <- decode.subrecord(decode.int64_with_default(4, 0))
+  use uint32_field <- decode.subrecord(decode.uint32_with_default(5, 0))
+  use uint64_field <- decode.subrecord(decode.uint64_with_default(6, 0))
+  use sint32_field <- decode.subrecord(decode.sint32(7))
+  use sint64_field <- decode.subrecord(decode.sint64(8))
+  use fixed32_field <- decode.subrecord(decode.fail("Unsupported field type"))
+  use fixed64_field <- decode.subrecord(decode.fail("Unsupported field type"))
+  use sfixed32_field <- decode.subrecord(decode.fail("Unsupported field type"))
+  use sfixed64_field <- decode.subrecord(decode.fail("Unsupported field type"))
+  use bool_field <- decode.subrecord(decode.bool_with_default(13, False))
+  use string_field <- decode.subrecord(decode.string_with_default(14, ""))
+  use bytes_field <- decode.subrecord(decode.bytes(15))
+  decode.success(AllScalarTypes(double_field: double_field, float_field: float_field, int32_field: int32_field, int64_field: int64_field, uint32_field: uint32_field, uint64_field: uint64_field, sint32_field: sint32_field, sint64_field: sint64_field, fixed32_field: fixed32_field, fixed64_field: fixed64_field, sfixed32_field: sfixed32_field, sfixed64_field: sfixed64_field, bool_field: bool_field, string_field: string_field, bytes_field: bytes_field))
+}
+
+pub fn decode_allscalartypes(data: BitArray) -> Result(AllScalarTypes, decode.DecodeError) {
+  decode.decode(data, allscalartypes_decoder())
+}
+
+

@@ -1,0 +1,237 @@
+---
+version: 1.4.0
+title: Generate complex oneof with nested message
+file: ./test/codegen_test.gleam
+test_name: generate_complex_oneof_test
+---
+import gleam/list
+import gleam/option.{type Option, None, Some}
+import gleam/result
+import gloto/wire
+import gloto/decode
+import gloto/encode
+
+
+
+pub type ComplexOneofData {
+  Text(String)
+  Number(Int)
+  Flag(Bool)
+  Nested(NestedMessage)
+}
+
+pub type ComplexOneof {
+  ComplexOneof(
+  id: String,
+  tags: List(String),
+  data: Result(ComplexOneofData, Nil)
+  )
+}
+
+pub type NestedMessage {
+  NestedMessage(
+  value: String
+  )
+}
+
+pub fn encode_complexoneof(complexoneof: ComplexOneof) -> BitArray {
+  let tags_fields = list.map(complexoneof.tags, fn(v) { encode.string_field(10, v) })
+  let other_fields = [
+    encode.string_field(1, complexoneof.id),
+    case complexoneof.data {
+    Ok(oneof_value) -> {
+      case oneof_value {
+      Text(value) -> encode.string_field(2, value)
+      Number(value) -> encode.int32_field(3, value)
+      Flag(value) -> encode.bool_field(4, value)
+      Nested(value) -> encode.field(5, wire.LengthDelimited, encode.length_delimited(encode_nestedmessage(value)))
+      }
+    }
+    Error(_) -> <<>>
+  }
+  ]
+  encode.message(list.append(other_fields, list.flatten([tags_fields])))
+}
+
+pub fn encode_nestedmessage(nestedmessage: NestedMessage) -> BitArray {
+  encode.message([
+    encode.string_field(1, nestedmessage.value)
+  ])
+}
+
+pub fn complexoneof_decoder() -> decode.Decoder(ComplexOneof) {
+  use id <- decode.subrecord(decode.string_with_default(1, ""))
+  use tags <- decode.subrecord(decode.repeated_string(10))
+  use data <- decode.subrecord(oneof_data_decoder())
+  decode.success(ComplexOneof(id: id, tags: tags, data: data))
+}
+
+pub fn decode_complexoneof(data: BitArray) -> Result(ComplexOneof, decode.DecodeError) {
+  decode.decode(data, complexoneof_decoder())
+}
+
+fn oneof_data_decoder() -> decode.Decoder(Result(ComplexOneofData, Nil)) {
+  fn(fields) {
+    case list.find(fields, fn(f) { f.number == 2 }) {
+      Ok(field) -> {
+        case decode.string_field(field) {
+          Ok(value) -> Ok(Ok(ComplexOneofData.Text(value)))
+          Error(_) -> {
+            case list.find(fields, fn(f) { f.number == 3 }) {
+              Ok(field) -> {
+                case decode.int32_field(field) {
+                  Ok(value) -> Ok(Ok(ComplexOneofData.Number(value)))
+                  Error(_) -> {
+                    case list.find(fields, fn(f) { f.number == 4 }) {
+                      Ok(field) -> {
+                        case decode.bool_field(field) {
+                          Ok(value) -> Ok(Ok(ComplexOneofData.Flag(value)))
+                          Error(_) -> {
+                            case list.find(fields, fn(f) { f.number == 5 }) {
+                              Ok(field) -> {
+                                case fn(f) { decode.message_field(f, decode_nestedmessage) }(field) {
+                                  Ok(value) -> Ok(Ok(ComplexOneofData.Nested(value)))
+                                  Error(_) -> Ok(Error(Nil))
+                                }
+                              }
+                              Error(_) -> Ok(Error(Nil))
+                            }
+                          }
+                        }
+                      }
+                      Error(_) -> {
+                        case list.find(fields, fn(f) { f.number == 5 }) {
+                          Ok(field) -> {
+                            case fn(f) { decode.message_field(f, decode_nestedmessage) }(field) {
+                              Ok(value) -> Ok(Ok(ComplexOneofData.Nested(value)))
+                              Error(_) -> Ok(Error(Nil))
+                            }
+                          }
+                          Error(_) -> Ok(Error(Nil))
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+              Error(_) -> {
+                case list.find(fields, fn(f) { f.number == 4 }) {
+                  Ok(field) -> {
+                    case decode.bool_field(field) {
+                      Ok(value) -> Ok(Ok(ComplexOneofData.Flag(value)))
+                      Error(_) -> {
+                        case list.find(fields, fn(f) { f.number == 5 }) {
+                          Ok(field) -> {
+                            case fn(f) { decode.message_field(f, decode_nestedmessage) }(field) {
+                              Ok(value) -> Ok(Ok(ComplexOneofData.Nested(value)))
+                              Error(_) -> Ok(Error(Nil))
+                            }
+                          }
+                          Error(_) -> Ok(Error(Nil))
+                        }
+                      }
+                    }
+                  }
+                  Error(_) -> {
+                    case list.find(fields, fn(f) { f.number == 5 }) {
+                      Ok(field) -> {
+                        case fn(f) { decode.message_field(f, decode_nestedmessage) }(field) {
+                          Ok(value) -> Ok(Ok(ComplexOneofData.Nested(value)))
+                          Error(_) -> Ok(Error(Nil))
+                        }
+                      }
+                      Error(_) -> Ok(Error(Nil))
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      Error(_) -> {
+        case list.find(fields, fn(f) { f.number == 3 }) {
+          Ok(field) -> {
+            case decode.int32_field(field) {
+              Ok(value) -> Ok(Ok(ComplexOneofData.Number(value)))
+              Error(_) -> {
+                case list.find(fields, fn(f) { f.number == 4 }) {
+                  Ok(field) -> {
+                    case decode.bool_field(field) {
+                      Ok(value) -> Ok(Ok(ComplexOneofData.Flag(value)))
+                      Error(_) -> {
+                        case list.find(fields, fn(f) { f.number == 5 }) {
+                          Ok(field) -> {
+                            case fn(f) { decode.message_field(f, decode_nestedmessage) }(field) {
+                              Ok(value) -> Ok(Ok(ComplexOneofData.Nested(value)))
+                              Error(_) -> Ok(Error(Nil))
+                            }
+                          }
+                          Error(_) -> Ok(Error(Nil))
+                        }
+                      }
+                    }
+                  }
+                  Error(_) -> {
+                    case list.find(fields, fn(f) { f.number == 5 }) {
+                      Ok(field) -> {
+                        case fn(f) { decode.message_field(f, decode_nestedmessage) }(field) {
+                          Ok(value) -> Ok(Ok(ComplexOneofData.Nested(value)))
+                          Error(_) -> Ok(Error(Nil))
+                        }
+                      }
+                      Error(_) -> Ok(Error(Nil))
+                    }
+                  }
+                }
+              }
+            }
+          }
+          Error(_) -> {
+            case list.find(fields, fn(f) { f.number == 4 }) {
+              Ok(field) -> {
+                case decode.bool_field(field) {
+                  Ok(value) -> Ok(Ok(ComplexOneofData.Flag(value)))
+                  Error(_) -> {
+                    case list.find(fields, fn(f) { f.number == 5 }) {
+                      Ok(field) -> {
+                        case fn(f) { decode.message_field(f, decode_nestedmessage) }(field) {
+                          Ok(value) -> Ok(Ok(ComplexOneofData.Nested(value)))
+                          Error(_) -> Ok(Error(Nil))
+                        }
+                      }
+                      Error(_) -> Ok(Error(Nil))
+                    }
+                  }
+                }
+              }
+              Error(_) -> {
+                case list.find(fields, fn(f) { f.number == 5 }) {
+                  Ok(field) -> {
+                    case fn(f) { decode.message_field(f, decode_nestedmessage) }(field) {
+                      Ok(value) -> Ok(Ok(ComplexOneofData.Nested(value)))
+                      Error(_) -> Ok(Error(Nil))
+                    }
+                  }
+                  Error(_) -> Ok(Error(Nil))
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  |> decode.Decoder
+}
+
+pub fn nestedmessage_decoder() -> decode.Decoder(NestedMessage) {
+  use value <- decode.subrecord(decode.string_with_default(1, ""))
+  decode.success(NestedMessage(value: value))
+}
+
+pub fn decode_nestedmessage(data: BitArray) -> Result(NestedMessage, decode.DecodeError) {
+  decode.decode(data, nestedmessage_decoder())
+}
+
+

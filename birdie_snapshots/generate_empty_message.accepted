@@ -1,0 +1,32 @@
+---
+version: 1.4.0
+title: Generate empty message
+file: ./test/codegen_test.gleam
+test_name: generate_empty_message_test
+---
+import gloto/decode
+import gloto/encode
+
+
+
+pub type EmptyMessage {
+  EmptyMessage(
+
+  )
+}
+
+pub fn encode_emptymessage(_emptymessage: EmptyMessage) -> BitArray {
+  encode.message([
+    
+  ])
+}
+
+pub fn emptymessage_decoder() -> decode.Decoder(EmptyMessage) {
+  decode.success(EmptyMessage)
+}
+
+pub fn decode_emptymessage(data: BitArray) -> Result(EmptyMessage, decode.DecodeError) {
+  decode.decode(data, emptymessage_decoder())
+}
+
+

@@ -1,0 +1,52 @@
+---
+version: 1.4.0
+title: Generate all field types
+file: ./test/codegen_test.gleam
+test_name: field_types_test
+---
+import gloto/wire
+import gloto/decode
+import gloto/encode
+
+
+
+pub type AllTypes {
+  AllTypes(
+  d: Float,
+  f: Float,
+  i32: Int,
+  i64: Int,
+  b: Bool,
+  s: String,
+  by: BitArray
+  )
+}
+
+pub fn encode_alltypes(alltypes: AllTypes) -> BitArray {
+  encode.message([
+    encode.double_field(1, alltypes.d),
+    encode.float_field(2, alltypes.f),
+    encode.int32_field(3, alltypes.i32),
+    encode.int64_field(4, alltypes.i64),
+    encode.bool_field(5, alltypes.b),
+    encode.string_field(6, alltypes.s),
+    encode.field(7, wire.LengthDelimited, encode.length_delimited(alltypes.by))
+  ])
+}
+
+pub fn alltypes_decoder() -> decode.Decoder(AllTypes) {
+  use d <- decode.subrecord(decode.double(1))
+  use f <- decode.subrecord(decode.float(2))
+  use i32 <- decode.subrecord(decode.int32_with_default(3, 0))
+  use i64 <- decode.subrecord(decode.int64_with_default(4, 0))
+  use b <- decode.subrecord(decode.bool_with_default(5, False))
+  use s <- decode.subrecord(decode.string_with_default(6, ""))
+  use by <- decode.subrecord(decode.bytes(7))
+  decode.success(AllTypes(d: d, f: f, i32: i32, i64: i64, b: b, s: s, by: by))
+}
+
+pub fn decode_alltypes(data: BitArray) -> Result(AllTypes, decode.DecodeError) {
+  decode.decode(data, alltypes_decoder())
+}
+
+

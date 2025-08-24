@@ -1,0 +1,23 @@
+#!/bin/bash
+# Pre-commit hook to prevent committing generated test files
+
+# Check if any files in build/test/ are staged
+if git diff --cached --name-only | grep -q "^build/test/"; then
+    echo "Error: Attempting to commit generated test files from build/test/"
+    echo "These files should not be committed to the repository."
+    echo "Run 'git reset HEAD build/test/' to unstage them."
+    exit 1
+fi
+
+# Check if any _pb.gleam files in src/ are staged (except example_pb.gleam and test_optional_pb.gleam)
+if git diff --cached --name-only | grep -E "^src/.*_pb\.gleam$" | grep -v "example_pb.gleam" | grep -v "test_optional_pb.gleam"; then
+    echo "Warning: You are committing generated _pb.gleam files in src/"
+    echo "Consider moving test-generated files to build/test/ instead."
+    read -p "Continue anyway? (y/n) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        exit 1
+    fi
+fi
+
+exit 0

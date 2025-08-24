@@ -1,0 +1,10 @@
+*.beam
+*.ez
+/build
+erl_crash.dump
+
+# Test-generated files - kept in test/ dir to avoid cluttering src/
+test/*_pb.gleam
+test/.generated/
+build/test_gen/
+dev/
