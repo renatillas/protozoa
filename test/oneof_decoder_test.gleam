@@ -1,7 +1,7 @@
 import gleam/string
 import gleeunit
-import gloto/codegen
-import gloto/proto_parser as parser
+import protozoa/codegen
+import protozoa/proto_parser as parser
 
 pub fn main() -> Nil {
   gleeunit.main()

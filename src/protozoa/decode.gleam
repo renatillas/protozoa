@@ -1,10 +1,12 @@
 /// A decoder module following the gleam/dynamic/decode pattern.
 /// This provides a composable, type-safe API for decoding protobuf messages.
 import gleam/bit_array
+import gleam/dict.{type Dict}
 import gleam/int
 import gleam/list
+import gleam/option.{None, Some}
 import gleam/result
-import gloto/wire.{type WireType}
+import protozoa/wire.{type WireType}
 
 // Core types
 
@@ -31,10 +33,11 @@ pub type ProtoValue {
   ProtoLengthDelimited(BitArray)
 }
 
-/// A decoder is a function that takes a list of fields and produces a value.
+/// A decoder is a function that takes a dict of fields and produces a value.
 /// This type allows for composable, type-safe decoding of Protocol Buffer messages.
+/// Fields are stored in a Dict for O(1) lookup performance.
 pub opaque type Decoder(a) {
-  Decoder(fn(List(Field)) -> Result(a, DecodeError))
+  Decoder(fn(Dict(Int, List(Field))) -> Result(a, DecodeError))
 }
 
 /// Run a decoder on a BitArray containing Protocol Buffer data.
@@ -50,8 +53,9 @@ pub fn decode(
   with decoder: Decoder(a),
 ) -> Result(a, DecodeError) {
   use fields <- result.try(decode_message(data))
+  let field_dict = build_field_dict(fields)
   let Decoder(f) = decoder
-  f(fields)
+  f(field_dict)
 }
 
 /// Create a decoder that always succeeds with a value.
@@ -64,6 +68,23 @@ pub fn decode(
 /// ```
 pub fn success(value: a) -> Decoder(a) {
   Decoder(fn(_fields) { Ok(value) })
+}
+
+/// Create a decoder from a function that takes a dict of fields.
+/// This is useful for creating custom decoders for complex types like oneofs.
+/// 
+/// ## Examples
+/// 
+/// ```gleam
+/// from_field_dict(fn(fields) {
+///   // Custom decoding logic using dict.get
+///   Ok(value)
+/// })
+/// ```
+pub fn from_field_dict(
+  f: fn(Dict(Int, List(Field))) -> Result(a, DecodeError),
+) -> Decoder(a) {
+  Decoder(f)
 }
 
 /// Create a decoder that always fails with an error message.
@@ -92,8 +113,9 @@ pub fn field(
   decoder: fn(Field) -> Result(a, DecodeError),
 ) -> Decoder(a) {
   Decoder(fn(fields) {
-    case list.find(fields, fn(f: Field) { f.number == number }) {
-      Ok(field) -> decoder(field)
+    case dict.get(fields, number) {
+      Ok([field, ..]) -> decoder(field)
+      Ok([]) -> Error(FieldNotFound(number))
       Error(_) -> Error(FieldNotFound(number))
     }
   })
@@ -113,13 +135,14 @@ pub fn optional_field(
   decoder: fn(Field) -> Result(a, DecodeError),
 ) -> Decoder(Result(a, Nil)) {
   Decoder(fn(fields) {
-    case list.find(fields, fn(f: Field) { f.number == number }) {
-      Ok(field) -> {
+    case dict.get(fields, number) {
+      Ok([field, ..]) -> {
         case decoder(field) {
           Ok(value) -> Ok(Ok(value))
           Error(_) -> Ok(Error(Nil))
         }
       }
+      Ok([]) -> Ok(Error(Nil))
       Error(_) -> Ok(Error(Nil))
     }
   })
@@ -139,13 +162,14 @@ pub fn field_with_default(
   default: a,
 ) -> Decoder(a) {
   Decoder(fn(fields) {
-    case list.find(fields, fn(f: Field) { f.number == number }) {
-      Ok(field) -> {
+    case dict.get(fields, number) {
+      Ok([field, ..]) -> {
         case decoder(field) {
           Ok(value) -> Ok(value)
           Error(_) -> Ok(default)
         }
       }
+      Ok([]) -> Ok(default)
       Error(_) -> Ok(default)
     }
   })
@@ -164,9 +188,10 @@ pub fn repeated_field(
   decoder: fn(Field) -> Result(a, DecodeError),
 ) -> Decoder(List(a)) {
   Decoder(fn(fields) {
-    fields
-    |> list.filter(fn(f: Field) { f.number == number })
-    |> list.try_map(decoder)
+    case dict.get(fields, number) {
+      Ok(field_list) -> list.try_map(field_list, decoder)
+      Error(_) -> Ok([])
+    }
   })
 }
 
@@ -237,6 +262,26 @@ pub fn bool_field(field: Field) -> Result(Bool, DecodeError) {
   Ok(value != 0)
 }
 
+/// Decodes a varint field as an int32.
+pub fn int32_field(field: Field) -> Result(Int, DecodeError) {
+  varint_field(field)
+}
+
+/// Decodes a varint field as an int64.
+pub fn int64_field(field: Field) -> Result(Int, DecodeError) {
+  varint_field(field)
+}
+
+/// Decodes a varint field as a uint32.
+pub fn uint32_field(field: Field) -> Result(Int, DecodeError) {
+  varint_field(field)
+}
+
+/// Decodes a varint field as a uint64.
+pub fn uint64_field(field: Field) -> Result(Int, DecodeError) {
+  varint_field(field)
+}
+
 /// Decodes a fixed32 field as an integer.
 pub fn fixed32_int_field(field: Field) -> Result(Int, DecodeError) {
   case field.wire_type {
@@ -296,8 +341,9 @@ pub fn message_field(
 ) -> Result(a, DecodeError) {
   use bytes <- result.try(bytes_field(field))
   use inner_fields <- result.try(decode_message(bytes))
+  let field_dict = build_field_dict(inner_fields)
   let Decoder(f) = decoder
-  f(inner_fields)
+  f(field_dict)
 }
 
 // Convenience decoders combining field number and type
@@ -464,6 +510,19 @@ pub fn map(decoder: Decoder(a), f: fn(a) -> b) -> Decoder(b) {
 
 fn decode_message(data: BitArray) -> Result(List(Field), DecodeError) {
   decode_fields(data, [])
+}
+
+/// Build a dictionary from a list of fields for O(1) lookup performance.
+/// Fields with the same number are grouped together in a list.
+fn build_field_dict(fields: List(Field)) -> Dict(Int, List(Field)) {
+  list.fold(fields, dict.new(), fn(acc, field) {
+    dict.upsert(acc, field.number, fn(existing) {
+      case existing {
+        Some(fields) -> list.append(fields, [field])
+        None -> [field]
+      }
+    })
+  })
 }
 
 fn decode_fields(

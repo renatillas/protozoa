@@ -2,8 +2,8 @@ import gleam/bit_array
 import gleam/float
 import gleam/order
 import gleeunit
-import gloto/decode
-import gloto/encode
+import protozoa/decode
+import protozoa/encode
 
 pub fn main() {
   gleeunit.main()

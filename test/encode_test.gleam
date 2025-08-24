@@ -1,7 +1,7 @@
 import gleam/bit_array
 import gleeunit
-import gloto/encode
-import gloto/wire
+import protozoa/encode
+import protozoa/wire
 
 pub fn main() {
   gleeunit.main()

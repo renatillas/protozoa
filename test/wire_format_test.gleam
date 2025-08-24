@@ -1,6 +1,6 @@
 import gleam/list
 import gleeunit
-import gloto/wire as wire_format
+import protozoa/wire as wire_format
 
 pub fn main() {
   gleeunit.main()

@@ -1,7 +1,7 @@
 import gleam/bit_array
 import gleam/int
 import gleam/list
-import gloto/wire.{type WireType}
+import protozoa/wire.{type WireType}
 
 /// Encodes an integer as a varint (variable-length integer).
 /// Varints are used for int32, int64, uint32, uint64, bool, and enum fields.

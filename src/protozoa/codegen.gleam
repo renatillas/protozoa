@@ -2,8 +2,9 @@
 /// Uses the composable decode module for type-safe decoding.
 import gleam/int
 import gleam/list
+import gleam/set
 import gleam/string
-import gloto/proto_parser.{
+import protozoa/proto_parser.{
   type Enum, type Field, type Message, type ProtoFile, type ProtoType,
 }
 
@@ -44,98 +45,101 @@ pub fn generate_simple(proto_file: ProtoFile) -> String {
 
 fn generate_smart_imports(proto_file: ProtoFile) -> String {
   // Check what features are actually used
-  let has_repeated = list.any(proto_file.messages, fn(msg) {
-    list.any(msg.fields, fn(field) {
-      case field.field_type {
-        proto_parser.Repeated(_) -> True
-        _ -> False
-      }
-    })
-  })
-  
-  let has_optional = list.any(proto_file.messages, fn(msg) {
-    list.any(msg.fields, fn(field) {
-      case field.field_type {
-        proto_parser.Optional(_) -> True
-        _ -> False
-      }
-    })
-  })
-  
-  let has_oneof = list.any(proto_file.messages, fn(msg) {
-    !list.is_empty(msg.oneofs)
-  })
-  
-  let has_map = list.any(proto_file.messages, fn(msg) {
-    list.any(msg.fields, fn(field) {
-      case field.field_type {
-        proto_parser.Map(_, _) -> True
-        _ -> False
-      }
-    })
-  })
-  
-  // Build imports based on what's needed
-  let base_imports = [
-    "import gloto/decode",
-    "import gloto/encode",
-  ]
-  
-  let conditional_imports = []
-  let conditional_imports = case has_repeated || has_map || has_oneof {
-    True -> list.append(conditional_imports, ["import gleam/list"])
-    False -> conditional_imports
-  }
-  
-  let conditional_imports = case has_optional || has_oneof {
-    True -> list.append(conditional_imports, ["import gleam/option.{type Option, None, Some}"])
-    False -> conditional_imports
-  }
-  
-  let conditional_imports = case has_oneof {
-    True -> list.append(conditional_imports, ["import gleam/result"])
-    False -> conditional_imports
-  }
-  
-  // Wire is used for:
-  // 1. Bytes fields
-  // 2. Nested messages (MessageType)
-  // 3. Optional nested messages
-  // 4. Map fields (for encoding)
-  // 5. Enum fields
-  let needs_wire = list.any(proto_file.messages, fn(msg) {
-    // Check regular fields
-    let has_special_fields = list.any(msg.fields, fn(field) {
-      case field.field_type {
-        proto_parser.Bytes -> True
-        proto_parser.MessageType(_) -> True
-        proto_parser.EnumType(_) -> True
-        proto_parser.Optional(proto_parser.MessageType(_)) -> True
-        proto_parser.Repeated(proto_parser.EnumType(_)) -> True
-        proto_parser.Map(_, _) -> True
-        _ -> False
-      }
-    })
-    
-    // Check oneof fields for message types
-    let has_oneof_messages = list.any(msg.oneofs, fn(oneof) {
-      list.any(oneof.fields, fn(field) {
+  let has_repeated =
+    list.any(proto_file.messages, fn(msg) {
+      list.any(msg.fields, fn(field) {
         case field.field_type {
-          proto_parser.MessageType(_) -> True
+          proto_parser.Repeated(_) -> True
           _ -> False
         }
       })
     })
-    
-    has_special_fields || has_oneof_messages
-  })
-  
-  let conditional_imports = case needs_wire || !list.is_empty(proto_file.enums) {
-    True -> list.append(conditional_imports, ["import gloto/wire"])
-    False -> conditional_imports
+
+  let has_optional =
+    list.any(proto_file.messages, fn(msg) {
+      list.any(msg.fields, fn(field) {
+        case field.field_type {
+          proto_parser.Optional(_) -> True
+          _ -> False
+        }
+      })
+    })
+
+  let has_oneof =
+    list.any(proto_file.messages, fn(msg) { !list.is_empty(msg.oneofs) })
+  let has_enums = !list.is_empty(proto_file.enums)
+
+  let has_map =
+    list.any(proto_file.messages, fn(msg) {
+      list.any(msg.fields, fn(field) {
+        case field.field_type {
+          proto_parser.Map(_, _) -> True
+          _ -> False
+        }
+      })
+    })
+
+  let needs_wire =
+    list.any(proto_file.messages, fn(msg) {
+      // Check regular fields
+      let has_special_fields =
+        list.any(msg.fields, fn(field) {
+          case field.field_type {
+            proto_parser.Bytes -> True
+            proto_parser.MessageType(_) -> True
+            proto_parser.Optional(proto_parser.MessageType(_)) -> True
+            proto_parser.Map(_, _) -> True
+            _ -> False
+          }
+        })
+
+      // Check oneof fields for message types
+      let has_oneof_messages =
+        list.any(msg.oneofs, fn(oneof) {
+          list.any(oneof.fields, fn(field) {
+            case field.field_type {
+              proto_parser.MessageType(_) -> True
+              _ -> False
+            }
+          })
+        })
+      has_special_fields || has_oneof_messages
+    })
+
+  // Build imports based on what's needed
+  let base_imports = [
+    "import protozoa/decode",
+    "import protozoa/encode",
+  ]
+
+  let conditional_imports =
+    set.new()
+    |> add_to_set_if_used(has_enums, "import gleam/int")
+    |> add_to_set_if_used(has_enums, "import gleam/result")
+    |> add_to_set_if_used(has_oneof, "import gleam/dict")
+    |> add_to_set_if_used(has_repeated, "import gleam/list")
+    |> add_to_set_if_used(needs_wire, "import protozoa/wire")
+    |> add_to_set_if_used(has_map, "import gleam/list")
+    |> add_to_set_if_used(
+      has_optional,
+      "import gleam/option.{type Option, None, Some}",
+    )
+
+  string.join(
+    set.to_list(set.union(conditional_imports, set.from_list(base_imports))),
+    "\n",
+  )
+}
+
+pub fn add_to_set_if_used(
+  imports: set.Set(String),
+  condition: Bool,
+  import_: String,
+) -> set.Set(String) {
+  case condition {
+    True -> set.insert(imports, import_)
+    False -> imports
   }
-  
-  string.join(list.append(conditional_imports, base_imports), "\n")
 }
 
 fn generate_types(messages: List(Message)) -> String {
@@ -251,10 +255,10 @@ fn generate_encoders(messages: List(Message)) -> String {
 
 fn generate_message_encoder(message: Message) -> String {
   let function_name = "encode_" <> string.lowercase(message.name)
-  
+
   // Check if message is empty (no fields and no oneofs)
   let is_empty = list.is_empty(message.fields) && list.is_empty(message.oneofs)
-  
+
   // Use underscore prefix for unused parameters in empty messages
   let param_name = case is_empty {
     True -> "_" <> string.lowercase(message.name)
@@ -723,30 +727,28 @@ fn generate_message_decoder_composable(message: Message) -> String {
   let decoder_body = generate_decoder_body(message)
 
   // Generate oneof helper decoder functions
-  let oneof_decoders = 
+  let oneof_decoders =
     message.oneofs
-    |> list.map(fn(oneof) {
-      generate_oneof_helper_decoder(message.name, oneof)
-    })
+    |> list.map(fn(oneof) { generate_oneof_helper_decoder(message.name, oneof) })
     |> string.join("\n\n")
 
   // Generate map entry decoder functions
-  let map_decoders = 
+  let map_decoders =
     message.fields
     |> list.filter_map(fn(field) {
       case field.field_type {
-        proto_parser.Map(key_type, value_type) -> 
+        proto_parser.Map(key_type, value_type) ->
           Ok(generate_map_entry_decoder(field.number, key_type, value_type))
         _ -> Error(Nil)
       }
     })
     |> string.join("\n\n")
 
-  let helper_decoders = case #(oneof_decoders, map_decoders) {
-    #("", "") -> ""
-    #(o, "") -> "\n\n" <> o
-    #("", m) -> "\n\n" <> m
-    #(o, m) -> "\n\n" <> o <> "\n\n" <> m
+  let helper_decoders = case oneof_decoders, map_decoders {
+    "", "" -> ""
+    o, "" -> "\n\n" <> o
+    "", m -> "\n\n" <> m
+    o, m -> "\n\n" <> o <> "\n\n" <> m
   }
 
   "pub fn "
@@ -815,8 +817,7 @@ fn generate_oneof_decoder(
   oneof: proto_parser.Oneof,
 ) -> String {
   // Generate a call to a helper decoder function
-  let decoder_name = 
-    "oneof_" <> string.lowercase(oneof.name) <> "_decoder()"
+  let decoder_name = "oneof_" <> string.lowercase(oneof.name) <> "_decoder()"
   decoder_name
 }
 
@@ -840,7 +841,12 @@ fn generate_oneof_helper_decoder(
     })
 
   case field_checks {
-    [] -> "fn " <> decoder_name <> "() -> decode.Decoder(Result(" <> oneof_type <> ", Nil)) {
+    [] ->
+      "fn "
+      <> decoder_name
+      <> "() -> decode.Decoder(Result("
+      <> oneof_type
+      <> ", Nil)) {
   decode.success(Error(Nil))
 }"
     _ -> {
@@ -848,11 +854,16 @@ fn generate_oneof_helper_decoder(
       let decoder_body =
         build_oneof_decoder_body(field_checks, oneof_type, "    ")
 
-      "fn " <> decoder_name <> "() -> decode.Decoder(Result(" <> oneof_type <> ", Nil)) {
-  fn(fields) {
-" <> decoder_body <> "
-  }
-  |> decode.Decoder
+      "fn "
+      <> decoder_name
+      <> "() -> decode.Decoder(Result("
+      <> oneof_type
+      <> ", Nil)) {
+  decode.from_field_dict(fn(fields) {
+"
+      <> decoder_body
+      <> "
+  })
 }"
     }
   }
@@ -866,88 +877,31 @@ fn build_oneof_decoder_body(
   case fields {
     [] -> indent <> "Ok(Error(Nil))"
     [#(field_num, decoder, variant)] -> {
-      indent
-      <> "case list.find(fields, fn(f) { f.number == "
-      <> field_num
-      <> " }) {
-"
-      <> indent
-      <> "  Ok(field) -> {
-"
-      <> indent
-      <> "    case "
-      <> decoder
-      <> "(field) {
-"
-      <> indent
-      <> "      Ok(value) -> Ok(Ok("
-      <> oneof_type
-      <> "."
-      <> variant
-      <> "(value)))
-"
-      <> indent
-      <> "      Error(_) -> Ok(Error(Nil))
-"
-      <> indent
-      <> "    }
-"
-      <> indent
-      <> "  }
-"
-      <> indent
-      <> "  Error(_) -> Ok(Error(Nil))
-"
-      <> indent
-      <> "}"
+      indent <> "case dict.get(fields, " <> field_num <> ") {
+" <> indent <> "  Ok([field, ..]) -> {
+" <> indent <> "    case " <> decoder <> "(field) {
+" <> indent <> "      Ok(value) -> Ok(Ok(" <> variant <> "(value)))
+" <> indent <> "      Error(_) -> Ok(Error(Nil))
+" <> indent <> "    }
+" <> indent <> "  }
+" <> indent <> "  Ok([]) -> Ok(Error(Nil))
+" <> indent <> "  Error(_) -> Ok(Error(Nil))
+" <> indent <> "}"
     }
     [#(field_num, decoder, variant), ..rest] -> {
-      indent
-      <> "case list.find(fields, fn(f) { f.number == "
-      <> field_num
-      <> " }) {
-"
-      <> indent
-      <> "  Ok(field) -> {
-"
-      <> indent
-      <> "    case "
-      <> decoder
-      <> "(field) {
-"
-      <> indent
-      <> "      Ok(value) -> Ok(Ok("
-      <> oneof_type
-      <> "."
-      <> variant
-      <> "(value)))
-"
-      <> indent
-      <> "      Error(_) -> {
-"
-      <> build_oneof_decoder_body(rest, oneof_type, indent <> "        ")
-      <> "
-"
-      <> indent
-      <> "      }
-"
-      <> indent
-      <> "    }
-"
-      <> indent
-      <> "  }
-"
-      <> indent
-      <> "  Error(_) -> {
-"
-      <> build_oneof_decoder_body(rest, oneof_type, indent <> "    ")
-      <> "
-"
-      <> indent
-      <> "  }
-"
-      <> indent
-      <> "}"
+      indent <> "case dict.get(fields, " <> field_num <> ") {
+" <> indent <> "  Ok([field, ..]) -> {
+" <> indent <> "    case " <> decoder <> "(field) {
+" <> indent <> "      Ok(value) -> Ok(Ok(" <> variant <> "(value)))
+" <> indent <> "      Error(_) -> {
+" <> build_oneof_decoder_body(rest, oneof_type, indent <> "        ") <> "
+" <> indent <> "      }
+" <> indent <> "    }
+" <> indent <> "  }
+" <> indent <> "  _ -> {
+" <> build_oneof_decoder_body(rest, oneof_type, indent <> "    ") <> "
+" <> indent <> "  }
+" <> indent <> "}"
     }
   }
 }
@@ -962,9 +916,9 @@ fn generate_oneof_field_decoder(field: Field) -> String {
     proto_parser.Float -> "decode.float_field"
     proto_parser.Double -> "decode.double_field"
     proto_parser.MessageType(type_name) ->
-      "fn(f) { decode.message_field(f, decode_"
+      "fn(f) { decode.message_field(f, "
       <> string.lowercase(type_name)
-      <> ") }"
+      <> "_decoder()) }"
     _ ->
       "fn(_) { Error(decode.InvalidField(\"Unsupported oneof field type\")) }"
   }
@@ -1036,8 +990,8 @@ fn generate_field_decoder_composable(field: Field) -> String {
 
 fn generate_map_field_decoder(
   field_num: Int,
-  key_type: ProtoType,
-  value_type: ProtoType,
+  _key_type: ProtoType,
+  _value_type: ProtoType,
 ) -> String {
   let num_str = int.to_string(field_num)
 
@@ -1053,12 +1007,20 @@ fn generate_map_entry_decoder(
   value_type: ProtoType,
 ) -> String {
   let num_str = int.to_string(field_num)
-  
-  "fn map_entry_" <> num_str <> "_decoder() -> decode.Decoder(#(" 
-    <> gleam_type_for_proto(key_type) <> ", " 
-    <> gleam_type_for_proto(value_type) <> ")) {
-  use key <- decode.subrecord(" <> generate_map_key_decoder(key_type) <> ")
-  use value <- decode.subrecord(" <> generate_map_value_decoder(value_type) <> ")
+
+  "fn map_entry_"
+  <> num_str
+  <> "_decoder() -> decode.Decoder(#("
+  <> gleam_type_for_proto(key_type)
+  <> ", "
+  <> gleam_type_for_proto(value_type)
+  <> ")) {
+  use key <- decode.subrecord("
+  <> generate_map_key_decoder(key_type)
+  <> ")
+  use value <- decode.subrecord("
+  <> generate_map_value_decoder(value_type)
+  <> ")
   decode.success(#(key, value))
 }"
 }
