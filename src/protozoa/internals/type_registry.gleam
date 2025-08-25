@@ -178,12 +178,14 @@ fn add_enum(
   }
 }
 
+
 pub fn make_fully_qualified_name(package: String, type_name: String) -> String {
   case package {
     "" -> type_name
     _ -> package <> "." <> type_name
   }
 }
+
 
 pub fn resolve_type_reference(
   registry: TypeRegistry,
@@ -235,6 +237,7 @@ fn resolve_nested_type_candidates(
   }
 }
 
+
 pub fn lookup_type(
   registry: TypeRegistry,
   fqn: String,
@@ -260,6 +263,7 @@ pub fn lookup_type(
   }
 }
 
+
 pub fn get_types_from_file(
   registry: TypeRegistry,
   file_path: String,
@@ -277,6 +281,7 @@ pub fn get_types_from_file(
   })
 }
 
+
 pub fn get_file_package(
   registry: TypeRegistry,
   file_path: String,
@@ -286,6 +291,7 @@ pub fn get_file_package(
     Error(_) -> None
   }
 }
+
 
 pub fn get_type_source(registry: TypeRegistry, fqn: String) -> Option(String) {
   case dict.get(registry.type_sources, fqn) {

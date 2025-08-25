@@ -5,6 +5,7 @@ import protozoa/parser
 /// Provides definitions for Google's well-known protobuf types
 /// These are commonly used types that are part of the protobuf standard library
 
+
 pub fn get_well_known_proto_files() -> dict.Dict(String, parser.ProtoFile) {
   dict.new()
   |> dict.insert("google/protobuf/timestamp.proto", timestamp_proto())
@@ -278,6 +279,7 @@ fn field_mask_proto() -> parser.ProtoFile {
     enums: [],
   )
 }
+
 
 pub fn is_well_known_import(path: String) -> Bool {
   case path {

@@ -1,3 +1,41 @@
+//// Protocol Buffer Wire Format Module  
+////
+//// This module defines the low-level wire format types and utilities for Protocol Buffer
+//// binary encoding and decoding. It provides the foundational types and functions needed
+//// to work with the Protocol Buffer binary wire format specification.
+////
+//// ## Wire Format Fundamentals
+////
+//// Protocol Buffers use a binary wire format for efficient serialization. Each field
+//// is encoded with a specific wire type that determines how the data is represented:
+////
+//// - **Varint**: Variable-length integers (most integers, bools, enums)
+//// - **Fixed64**: 8-byte fixed-width values (double, fixed64, sfixed64)  
+//// - **LengthDelimited**: Length-prefixed data (strings, bytes, messages, maps)
+//// - **Fixed32**: 4-byte fixed-width values (float, fixed32, sfixed32)
+//// - **StartGroup/EndGroup**: Deprecated group encoding (proto2 only)
+////
+//// ## Capabilities
+////
+//// - **Wire type definitions**: Complete enumeration of Protocol Buffer wire types
+//// - **Tag manipulation**: Functions for creating and parsing field tags
+//// - **Format validation**: Utilities for validating wire format data
+//// - **Type safety**: Compile-time guarantees about wire format correctness
+////
+//// ## Usage in Protozoa
+////  
+//// This module is primarily used by the encode and decode modules to:
+//// - Determine the correct wire type for each field type
+//// - Create properly formatted field tags
+//// - Parse field numbers and wire types from binary data
+//// - Validate wire format compliance
+////
+//// ## Public API
+////
+//// The main public component is the `WireType` type which is used throughout
+//// the encode/decode pipeline. Internal utility functions are marked with
+//// `@internal` as they are implementation details.
+
 import gleam/int
 
 /// WireType represents the encoding format used for Protocol Buffer fields.
@@ -25,6 +63,7 @@ pub type WireType {
 /// - 3 for StartGroup (deprecated)
 /// - 4 for EndGroup (deprecated)
 /// - 5 for Fixed32
+@internal
 pub fn wire_type_value(wire_type: WireType) -> Int {
   case wire_type {
     Varint -> 0
@@ -46,6 +85,7 @@ pub fn wire_type_value(wire_type: WireType) -> Int {
 /// wire_type_from_int(2) // Ok(LengthDelimited)
 /// wire_type_from_int(7) // Error("Invalid wire type: 7")
 /// ```
+@internal
 pub fn wire_type_from_int(value: Int) -> Result(WireType, String) {
   case value {
     0 -> Ok(Varint)
@@ -67,6 +107,7 @@ pub fn wire_type_from_int(value: Int) -> Result(WireType, String) {
 /// make_tag(1, Varint) // Returns 8 (field 1 with wire type 0)
 /// make_tag(2, LengthDelimited) // Returns 18 (field 2 with wire type 2)
 /// ```
+@internal
 pub fn make_tag(field_number: Int, wire_type: WireType) -> Int {
   int.bitwise_shift_left(field_number, 3)
   |> int.bitwise_or(wire_type_value(wire_type))
@@ -81,6 +122,7 @@ pub fn make_tag(field_number: Int, wire_type: WireType) -> Int {
 /// get_field_number(8) // Returns 1
 /// get_field_number(18) // Returns 2
 /// ```
+@internal
 pub fn get_field_number(tag: Int) -> Int {
   int.bitwise_shift_right(tag, 3)
 }
@@ -95,6 +137,7 @@ pub fn get_field_number(tag: Int) -> Int {
 /// get_wire_type(8) // Ok(Varint)
 /// get_wire_type(18) // Ok(LengthDelimited)
 /// ```
+@internal
 pub fn get_wire_type(tag: Int) -> Result(WireType, String) {
   int.bitwise_and(tag, 7)
   |> wire_type_from_int

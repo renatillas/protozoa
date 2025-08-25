@@ -15,7 +15,7 @@ fn compile_test_and_save(
   test_fn: fn(String) -> Nil,
 ) -> Nil {
   let parsed = parser.parse(proto_content)
-  let generated = codegen.generate_simple(parsed)
+  let generated = codegen.generate_simple_for_testing(parsed)
 
   // Save the generated code to a file
   let output_path = "test/generated_outputs/" <> test_name <> ".gleam"

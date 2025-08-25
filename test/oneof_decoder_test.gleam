@@ -25,7 +25,7 @@ message TestOneof {
 "
 
   let parsed = parser.parse(proto_content)
-  let generated = codegen.generate_simple(parsed)
+  let generated = codegen.generate_simple_for_testing(parsed)
 
   // Check that the decoder properly tries all fields
   assert string.contains(

@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+import "common.proto";
+
+package test.imports;
+
+message Person {
+  string name = 1;
+  int32 age = 2;
+  test.common.Address address = 3;
+  test.common.Priority priority = 4;
+  test.common.Timestamp created_at = 5;
+}
+
+message Organization {
+  string name = 1;
+  repeated Person members = 2;
+  test.common.Address headquarters = 3;
+}

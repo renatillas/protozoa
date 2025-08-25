@@ -1,5 +1,47 @@
-/// A decoder module following the gleam/dynamic/decode pattern.
-/// This provides a composable, type-safe API for decoding protobuf messages.
+//// Protocol Buffer Decode Module  
+////
+//// This module provides a composable, type-safe API for decoding Protocol Buffer binary data
+//// into Gleam values. It follows the gleam/dynamic/decode pattern for familiar composability
+//// and error handling, making it easy to work with protobuf data in Gleam applications.
+////
+//// ## Design Philosophy
+////
+//// - **Composable decoders**: Small, focused decoder functions that can be combined
+//// - **Type safety**: Compile-time guarantees about decoded data structure
+//// - **Error handling**: Clear error messages for debugging decode failures
+//// - **Performance**: Efficient binary parsing with minimal allocations
+//// - **Gleam idioms**: Follows Result and Option patterns familiar to Gleam developers
+////
+//// ## Capabilities
+////
+//// - **All proto3 types**: Scalars (int32, string, bool), messages, enums, repeated fields
+//// - **Advanced features**: Oneofs, maps, optional fields, nested messages  
+//// - **Wire format parsing**: Handles protobuf binary wire format correctly
+//// - **Field-level decoding**: Individual field decoders for fine-grained control
+//// - **Message-level decoding**: Complete message decoders with field validation
+//// - **Default values**: Proper proto3 default value handling
+////
+//// ## Usage Pattern
+////
+//// Generated code uses this module to create message-specific decoder functions:
+//// ```gleam
+//// pub fn decode_user(data: BitArray) -> Result(User, DecodeError) {
+////   decode.message(data, user_decoder())
+//// }
+////
+//// fn user_decoder() -> decode.Decoder(User) {
+////   decode.into({
+////     use name <- decode.field("name", decode.string_field(1))
+////     use age <- decode.field("age", decode.int32_field(2))  
+////     User(name: name, age: age)
+////   })
+//// }
+//// ```
+////
+//// ## Error Handling  
+////
+//// All decode functions return `Result(T, DecodeError)` with descriptive error messages
+//// for debugging binary format issues, missing required fields, or type mismatches.
 import gleam/bit_array
 import gleam/dict.{type Dict}
 import gleam/int
@@ -19,12 +61,14 @@ pub type DecodeError {
 
 /// Represents a decoded Protocol Buffer field.
 /// Contains the field number, wire type, and raw data.
+@internal
 pub type Field {
   Field(number: Int, wire_type: WireType, data: BitArray)
 }
 
 /// Represents a decoded Protocol Buffer value.
 /// Can be a message, varint, fixed32, fixed64, or length-delimited data.
+@internal
 pub type ProtoValue {
   ProtoMessage(List(Field))
   ProtoVarint(Int)
@@ -199,6 +243,7 @@ pub fn repeated_field(
 
 /// Decodes a varint field to an integer.
 /// Used for int32, int64, uint32, uint64, bool, and enum fields.
+@internal
 pub fn varint_field(field: Field) -> Result(Int, DecodeError) {
   case field.wire_type {
     wire.Varint -> {
@@ -212,6 +257,7 @@ pub fn varint_field(field: Field) -> Result(Int, DecodeError) {
 }
 
 /// Decodes a length-delimited field as a UTF-8 string.
+@internal
 pub fn string_field(field: Field) -> Result(String, DecodeError) {
   case field.wire_type {
     wire.LengthDelimited -> {
@@ -223,6 +269,7 @@ pub fn string_field(field: Field) -> Result(String, DecodeError) {
 }
 
 /// Decodes a length-delimited field as raw bytes.
+@internal
 pub fn bytes_field(field: Field) -> Result(BitArray, DecodeError) {
   case field.wire_type {
     wire.LengthDelimited -> Ok(field.data)
@@ -231,6 +278,7 @@ pub fn bytes_field(field: Field) -> Result(BitArray, DecodeError) {
 }
 
 /// Decodes a fixed32 field as a float.
+@internal
 pub fn float_field(field: Field) -> Result(Float, DecodeError) {
   case field.wire_type {
     wire.Fixed32 -> {
@@ -244,6 +292,7 @@ pub fn float_field(field: Field) -> Result(Float, DecodeError) {
 }
 
 /// Decodes a fixed64 field as a double (Float in Gleam).
+@internal
 pub fn double_field(field: Field) -> Result(Float, DecodeError) {
   case field.wire_type {
     wire.Fixed64 -> {
@@ -257,32 +306,38 @@ pub fn double_field(field: Field) -> Result(Float, DecodeError) {
 }
 
 /// Decodes a varint field as a boolean (0 = false, non-zero = true).
+@internal
 pub fn bool_field(field: Field) -> Result(Bool, DecodeError) {
   use value <- result.try(varint_field(field))
   Ok(value != 0)
 }
 
 /// Decodes a varint field as an int32.
+@internal
 pub fn int32_field(field: Field) -> Result(Int, DecodeError) {
   varint_field(field)
 }
 
 /// Decodes a varint field as an int64.
+@internal
 pub fn int64_field(field: Field) -> Result(Int, DecodeError) {
   varint_field(field)
 }
 
 /// Decodes a varint field as a uint32.
+@internal
 pub fn uint32_field(field: Field) -> Result(Int, DecodeError) {
   varint_field(field)
 }
 
 /// Decodes a varint field as a uint64.
+@internal
 pub fn uint64_field(field: Field) -> Result(Int, DecodeError) {
   varint_field(field)
 }
 
 /// Decodes a fixed32 field as an integer.
+@internal
 pub fn fixed32_int_field(field: Field) -> Result(Int, DecodeError) {
   case field.wire_type {
     wire.Fixed32 -> {
@@ -296,6 +351,7 @@ pub fn fixed32_int_field(field: Field) -> Result(Int, DecodeError) {
 }
 
 /// Decodes a fixed64 field as an integer.
+@internal
 pub fn fixed64_int_field(field: Field) -> Result(Int, DecodeError) {
   case field.wire_type {
     wire.Fixed64 -> {
@@ -309,6 +365,7 @@ pub fn fixed64_int_field(field: Field) -> Result(Int, DecodeError) {
 }
 
 /// Decodes an sfixed32 field as a signed integer.
+@internal
 pub fn sfixed32_field(field: Field) -> Result(Int, DecodeError) {
   case field.wire_type {
     wire.Fixed32 -> {
@@ -322,6 +379,7 @@ pub fn sfixed32_field(field: Field) -> Result(Int, DecodeError) {
 }
 
 /// Decodes an sfixed64 field as a signed integer.
+@internal
 pub fn sfixed64_field(field: Field) -> Result(Int, DecodeError) {
   case field.wire_type {
     wire.Fixed64 -> {
@@ -335,6 +393,7 @@ pub fn sfixed64_field(field: Field) -> Result(Int, DecodeError) {
 }
 
 /// Decodes a nested message field using the provided decoder.
+@internal
 pub fn message_field(
   field: Field,
   decoder: Decoder(a),

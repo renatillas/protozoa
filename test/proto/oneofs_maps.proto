@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package test.advanced;
+
+message OneofMessage {
+  oneof value {
+    string string_value = 1;
+    int32 int_value = 2;
+    bool bool_value = 3;
+    SubMessage message_value = 4;
+  }
+  
+  string common_field = 5;
+}
+
+message SubMessage {
+  string content = 1;
+}
+
+message MapMessage {
+  map<string, int32> string_to_int = 1;
+  map<int32, string> int_to_string = 2;
+  map<string, SubMessage> string_to_message = 3;
+  map<string, Color> string_to_enum = 4;
+}
+
+enum Color {
+  UNKNOWN_COLOR = 0;
+  RED = 1;
+  GREEN = 2;
+  BLUE = 3;
+}
+
+// Complex message combining oneofs and maps
+message ComplexMessage {
+  oneof data {
+    MapMessage map_data = 1;
+    OneofMessage oneof_data = 2;
+  }
+  
+  map<string, OneofMessage> oneof_map = 3;
+  string id = 4;
+}

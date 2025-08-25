@@ -1,3 +1,53 @@
+//// Protocol Buffer Encode Module
+////
+//// This module provides functions for encoding Gleam values into Protocol Buffer binary format.
+//// It handles the conversion from typed Gleam data structures to the compact binary wire format
+//// used by Protocol Buffers for efficient storage and network transmission.
+////
+//// ## Design Philosophy
+////
+//// - **Correctness**: Produces valid Protocol Buffer binary data compatible with other implementations
+//// - **Efficiency**: Optimized encoding with minimal memory allocations and copies
+//// - **Composability**: Field-level encoders that can be combined for message encoding
+//// - **Type safety**: Compile-time guarantees about the structure of encoded data
+//// - **Deterministic output**: Consistent binary output for the same input data
+////
+//// ## Capabilities  
+////
+//// - **All proto3 types**: Scalars (int32, int64, string, bool, bytes), messages, enums
+//// - **Advanced features**: Repeated fields, maps, oneofs, nested messages
+//// - **Wire format compliance**: Correct tag encoding, varint encoding, length-delimited data
+//// - **Field-level encoding**: Individual field encoders for fine-grained control  
+//// - **Message-level encoding**: Complete message encoders with proper field ordering
+//// - **Size calculation**: Efficient pre-calculation of encoded message sizes
+////
+//// ## Usage Pattern
+////
+//// Generated code uses this module to create message-specific encoder functions:
+//// ```gleam
+//// pub fn encode_user(user: User) -> BitArray {
+////   encode.message([
+////     encode.string_field(1, user.name),
+////     encode.int32_field(2, user.age),
+////   ])
+//// }
+//// ```
+////
+//// ## Wire Format
+////
+//// The module correctly implements the Protocol Buffer wire format:
+//// - Varint encoding for integers and field tags
+//// - Length-delimited encoding for strings, bytes, and messages  
+//// - Fixed-width encoding for fixed32/fixed64 types
+//// - Proper field tag calculation with field numbers and wire types
+////
+//// ## Performance
+////
+//// Encoding is optimized for performance with:
+//// - Pre-calculated message sizes to avoid buffer reallocations
+//// - Efficient bit array operations for binary data construction
+//// - Minimal intermediate allocations during encoding
+
 import gleam/bit_array
 import gleam/int
 import gleam/list
@@ -138,6 +188,7 @@ pub fn double_field(field_number: Int, value: Float) -> BitArray {
 /// zigzag(1) // 2
 /// zigzag(-2) // 3
 /// ```
+@internal
 pub fn zigzag(value: Int) -> Int {
   case value >= 0 {
     True -> value * 2
@@ -162,6 +213,7 @@ pub fn message(fields: List(BitArray)) -> BitArray {
 
 /// Calculates the encoded size of a varint in bytes.
 /// Useful for pre-calculating message sizes.
+@internal
 pub fn varint_size(value: Int) -> Int {
   case value {
     v if v < 0 -> 10
@@ -180,6 +232,7 @@ pub fn varint_size(value: Int) -> Int {
 
 /// Calculates the total size of a message in bytes.
 /// Sums the sizes of all encoded fields.
+@internal
 pub fn message_size(fields: List(BitArray)) -> Int {
   list.fold(fields, 0, fn(acc, field) { acc + bit_array.byte_size(field) })
 }
@@ -280,6 +333,7 @@ pub fn repeated_sint64_field(field_number: Int, values: List(Int)) -> BitArray {
 }
 
 /// Calculates the encoded size of a field tag in bytes.
+@internal
 pub fn tag_size(field_number: Int) -> Int {
   varint_size(wire.make_tag(field_number, wire.Varint))
 }

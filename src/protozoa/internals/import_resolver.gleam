@@ -3,9 +3,10 @@ import gleam/list
 import gleam/result
 import gleam/set
 import protozoa/parser.{type ProtoFile}
-import protozoa/type_registry.{type TypeRegistry}
-import protozoa/well_known_types
+import protozoa/internals/type_registry.{type TypeRegistry}
+import protozoa/internals/well_known_types
 import simplifile
+
 
 pub type ImportResolver {
   ImportResolver(
@@ -17,6 +18,7 @@ pub type ImportResolver {
   )
 }
 
+
 pub type Error {
   FileNotFound(path: String)
   CircularDependency(path: String)
@@ -24,6 +26,7 @@ pub type Error {
   ParseError(path: String, reason: String)
   WellKnownTypeNotFound(path: String)
 }
+
 
 pub fn describe_error(error: Error) -> String {
   case error {
@@ -36,6 +39,7 @@ pub fn describe_error(error: Error) -> String {
   }
 }
 
+
 pub fn new() -> ImportResolver {
   ImportResolver(
     search_paths: ["."],
@@ -45,6 +49,7 @@ pub fn new() -> ImportResolver {
     public_imports: dict.new(),
   )
 }
+
 
 pub fn with_search_paths(
   resolver: ImportResolver,
@@ -89,6 +94,7 @@ fn detect_circular_dependency(
     }
   }
 }
+
 
 pub fn resolve_imports(
   resolver: ImportResolver,
@@ -188,15 +194,18 @@ pub fn resolve_imports(
   }
 }
 
+
 pub fn get_type_registry(resolver: ImportResolver) -> TypeRegistry {
   resolver.type_registry
 }
+
 
 pub fn get_all_loaded_files(
   resolver: ImportResolver,
 ) -> List(#(String, ProtoFile)) {
   dict.to_list(resolver.loaded_files)
 }
+
 
 pub fn get_public_imports(
   resolver: ImportResolver,

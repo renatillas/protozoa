@@ -4,10 +4,10 @@ import gleam/option.{Some}
 import gleam/string
 import gleeunit
 import protozoa/codegen
-import protozoa/import_resolver
+import protozoa/internals/import_resolver
 import protozoa/parser
-import protozoa/type_registry
-import protozoa/well_known_types
+import protozoa/internals/type_registry
+import protozoa/internals/well_known_types
 import simplifile
 
 pub fn main() {

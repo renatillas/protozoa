@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package test.repeated;
+
+message RepeatedScalars {
+  repeated string strings = 1;
+  repeated int32 numbers = 2;
+  repeated bool flags = 3;
+  repeated bytes data = 4;
+}
+
+enum Status {
+  PENDING = 0;
+  ACTIVE = 1;
+  INACTIVE = 2;
+}
+
+message RepeatedComplex {
+  repeated Status statuses = 1;
+  repeated NestedMessage messages = 2;
+}
+
+message NestedMessage {
+  string name = 1;
+  int32 value = 2;
+}
+
+// Test all combinations
+message MixedRepeated {
+  repeated string tags = 1;
+  
+  oneof content {
+    RepeatedScalars scalars = 2;
+    RepeatedComplex complex = 3;
+  }
+  
+  map<string, NestedMessage> message_map = 4;
+}
