@@ -109,9 +109,9 @@ fn find_external_references(
   list.filter_map(refs, fn(type_name) {
     case
       type_registry.resolve_type_reference(
+        registry,
         type_name,
         option.unwrap(proto_file.package, ""),
-        registry,
       )
     {
       Ok(fqn) -> {
@@ -141,8 +141,8 @@ fn extract_type_references(proto_type: ProtoType) -> List(String) {
 
 fn generate_cross_file_imports(
   external_refs: List(#(String, String)),
-  current_file: String,
-  registry: TypeRegistry,
+  _current_file: String,
+  _registry: TypeRegistry,
 ) -> List(String) {
   external_refs
   |> list.map(fn(ref) {
@@ -171,28 +171,166 @@ fn generate_types_with_registry(
   registry: TypeRegistry,
   file_path: String,
 ) -> String {
-  // Use existing generate_types for now
-  // TODO: Update to use registry for type resolution
-  generate_types(messages)
+  messages
+  |> list.map(fn(msg) { generate_type_with_registry(msg, registry, file_path) })
+  |> string.join("\n\n")
+}
+
+fn generate_type_with_registry(
+  message: Message,
+  registry: TypeRegistry,
+  file_path: String,
+) -> String {
+  let fields =
+    message.fields
+    |> list.map(fn(field) {
+      let field_type = resolve_field_type(field.field_type, registry, file_path)
+      "  " <> field.name <> ": " <> field_type
+    })
+    |> string.join(",\n")
+
+  let oneofs =
+    message.oneofs
+    |> list.map(fn(oneof) {
+      "  "
+      <> oneof.name
+      <> ": option.Option("
+      <> message.name
+      <> capitalize_first(oneof.name)
+      <> ")"
+    })
+    |> string.join(",\n")
+
+  let all_fields = case message.oneofs {
+    [] -> fields
+    _ -> fields <> ",\n" <> oneofs
+  }
+
+  let type_def =
+    "pub type "
+    <> message.name
+    <> " {\n  "
+    <> message.name
+    <> "(\n"
+    <> all_fields
+    <> "\n  )\n}"
+
+  let oneof_types =
+    message.oneofs
+    |> list.map(fn(oneof) {
+      generate_oneof_type_with_registry(
+        message.name,
+        oneof,
+        registry,
+        file_path,
+      )
+    })
+    |> string.join("\n\n")
+
+  case oneof_types {
+    "" -> type_def
+    _ -> type_def <> "\n\n" <> oneof_types
+  }
+}
+
+fn resolve_field_type(
+  proto_type: ProtoType,
+  registry: TypeRegistry,
+  file_path: String,
+) -> String {
+  case proto_type {
+    parser.MessageType(name) -> {
+      // Try to resolve the type to check if it's external
+      case type_registry.resolve_type_reference(registry, name, "") {
+        Ok(fqn) -> {
+          case type_registry.get_type_source(registry, fqn) {
+            option.Some(source) if source != file_path -> {
+              // External type - use module prefix
+              let module_name = get_base_name(source)
+              "generated/" <> module_name <> "." <> get_type_name(fqn)
+            }
+            _ -> name
+            // Local type
+          }
+        }
+        Error(_) -> name
+        // Fallback to original name
+      }
+    }
+    parser.EnumType(name) -> {
+      // Similar logic for enums
+      case type_registry.resolve_type_reference(registry, name, "") {
+        Ok(fqn) -> {
+          case type_registry.get_type_source(registry, fqn) {
+            option.Some(source) if source != file_path -> {
+              let module_name = get_base_name(source)
+              "generated/" <> module_name <> "." <> get_type_name(fqn)
+            }
+            _ -> name
+          }
+        }
+        Error(_) -> name
+      }
+    }
+    parser.Repeated(inner) ->
+      "List(" <> resolve_field_type(inner, registry, file_path) <> ")"
+    parser.Optional(inner) ->
+      "option.Option(" <> resolve_field_type(inner, registry, file_path) <> ")"
+    parser.Map(key_type, value_type) -> {
+      "dict.Dict("
+      <> gleam_type_for_proto(key_type)
+      <> ", "
+      <> resolve_field_type(value_type, registry, file_path)
+      <> ")"
+    }
+    _ -> gleam_type_for_proto(proto_type)
+  }
+}
+
+fn get_type_name(fqn: String) -> String {
+  fqn
+  |> string.split(".")
+  |> list.last()
+  |> result.unwrap(fqn)
+}
+
+fn generate_oneof_type_with_registry(
+  message_name: String,
+  oneof: parser.Oneof,
+  registry: TypeRegistry,
+  file_path: String,
+) -> String {
+  let variants =
+    oneof.fields
+    |> list.map(fn(field) {
+      let field_type = resolve_field_type(field.field_type, registry, file_path)
+      "  " <> capitalize_first(field.name) <> "(" <> field_type <> ")"
+    })
+    |> string.join("\n")
+
+  "pub type "
+  <> message_name
+  <> capitalize_first(oneof.name)
+  <> " {\n"
+  <> variants
+  <> "\n}"
 }
 
 fn generate_encoders_with_registry(
   messages: List(Message),
-  registry: TypeRegistry,
-  file_path: String,
+  _registry: TypeRegistry,
+  _file_path: String,
 ) -> String {
-  // Use existing generate_encoders for now
-  // TODO: Update to use registry for type resolution
+  // For now, use existing encoders as they don't need type resolution
   generate_encoders(messages)
 }
 
 fn generate_decoders_with_registry(
   messages: List(Message),
-  registry: TypeRegistry,
-  file_path: String,
+  _registry: TypeRegistry,
+  _file_path: String,
 ) -> String {
-  // Use existing generate_decoders for now
-  // TODO: Update to use registry for type resolution
+  // For now, use existing decoders as they don't need type resolution
   generate_decoders(messages)
 }
 

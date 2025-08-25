@@ -5,6 +5,8 @@ import gleam/result
 import gleam/string
 import protozoa/parser.{type Enum, type Message, type ProtoFile, type ProtoType}
 
+/// A registry to hold all message and enum types across multiple proto files,
+/// allowing for type resolution and lookup.
 pub type TypeRegistry {
   TypeRegistry(
     messages: dict.Dict(String, Message),
@@ -14,6 +16,22 @@ pub type TypeRegistry {
   )
 }
 
+/// Errors that can occur when adding types to the TypeRegistry.
+pub type Error {
+  DuplicateMessageDefinition(fqn: String)
+  DuplicateEnumDefinition(fqn: String)
+}
+
+pub fn describe_error(error: Error) -> String {
+  case error {
+    DuplicateMessageDefinition(fqn) ->
+      "Duplicate message definition for type: " <> fqn
+    DuplicateEnumDefinition(fqn) ->
+      "Duplicate enum definition for type: " <> fqn
+  }
+}
+
+/// Create a new, empty TypeRegistry.
 pub fn new() -> TypeRegistry {
   TypeRegistry(
     messages: dict.new(),
@@ -23,25 +41,12 @@ pub fn new() -> TypeRegistry {
   )
 }
 
-pub fn build_registry(
-  files: List(#(String, ProtoFile)),
-) -> Result(TypeRegistry, String) {
-  list.fold(files, Ok(new()), fn(acc, file_entry) {
-    case acc {
-      Error(e) -> Error(e)
-      Ok(registry) -> {
-        let #(file_path, proto_file) = file_entry
-        add_file_to_registry(registry, file_path, proto_file)
-      }
-    }
-  })
-}
-
-pub fn add_file_to_registry(
+/// Add types from a single ProtoFile to the TypeRegistry.
+pub fn add_file(
   registry: TypeRegistry,
   file_path: String,
   proto_file: ProtoFile,
-) -> Result(TypeRegistry, String) {
+) -> Result(TypeRegistry, Error) {
   let package = option.unwrap(proto_file.package, "")
 
   let registry =
@@ -72,23 +77,81 @@ fn add_message(
   message: Message,
   package: String,
   file_path: String,
-) -> Result(TypeRegistry, String) {
+) -> Result(TypeRegistry, Error) {
   let fqn = make_fully_qualified_name(package, message.name)
 
   case dict.get(registry.messages, fqn) {
     Ok(_existing) -> {
-      Error("Duplicate message definition: " <> fqn)
+      case dict.get(registry.type_sources, fqn) {
+        Ok(source) if source == file_path -> {
+          // Same file redefining - this is ok during reprocessing
+          Ok(
+            TypeRegistry(
+              ..registry,
+              messages: dict.insert(registry.messages, fqn, message),
+              type_sources: dict.insert(registry.type_sources, fqn, file_path),
+            ),
+          )
+        }
+        _ -> Error(DuplicateMessageDefinition(fqn))
+      }
     }
     Error(_) -> {
-      Ok(
+      // Also add nested messages to registry
+      let registry_with_main =
         TypeRegistry(
           ..registry,
           messages: dict.insert(registry.messages, fqn, message),
           type_sources: dict.insert(registry.type_sources, fqn, file_path),
-        ),
+        )
+
+      // Add nested messages recursively
+      add_nested_messages(
+        registry_with_main,
+        message.nested_messages,
+        fqn,
+        file_path,
       )
     }
   }
+}
+
+fn add_nested_messages(
+  registry: TypeRegistry,
+  nested_messages: List(Message),
+  parent_fqn: String,
+  file_path: String,
+) -> Result(TypeRegistry, Error) {
+  list.fold(nested_messages, Ok(registry), fn(acc, nested_msg) {
+    case acc {
+      Error(e) -> Error(e)
+      Ok(reg) -> {
+        let nested_fqn = parent_fqn <> "." <> nested_msg.name
+        case dict.get(reg.messages, nested_fqn) {
+          Ok(_) -> Error(DuplicateMessageDefinition(nested_fqn))
+          Error(_) -> {
+            let updated_reg =
+              TypeRegistry(
+                ..reg,
+                messages: dict.insert(reg.messages, nested_fqn, nested_msg),
+                type_sources: dict.insert(
+                  reg.type_sources,
+                  nested_fqn,
+                  file_path,
+                ),
+              )
+            // Recursively add nested messages of nested messages
+            add_nested_messages(
+              updated_reg,
+              nested_msg.nested_messages,
+              nested_fqn,
+              file_path,
+            )
+          }
+        }
+      }
+    }
+  })
 }
 
 fn add_enum(
@@ -96,12 +159,12 @@ fn add_enum(
   enum: Enum,
   package: String,
   file_path: String,
-) -> Result(TypeRegistry, String) {
+) -> Result(TypeRegistry, Error) {
   let fqn = make_fully_qualified_name(package, enum.name)
 
   case dict.get(registry.enums, fqn) {
     Ok(_existing) -> {
-      Error("Duplicate enum definition: " <> fqn)
+      Error(DuplicateEnumDefinition(fqn))
     }
     Error(_) -> {
       Ok(
@@ -123,28 +186,51 @@ pub fn make_fully_qualified_name(package: String, type_name: String) -> String {
 }
 
 pub fn resolve_type_reference(
+  registry: TypeRegistry,
   type_name: String,
   current_package: String,
-  registry: TypeRegistry,
 ) -> Result(String, String) {
+  // Try various resolution strategies
+  let candidates = [
+    // 1. Exact match (already fully qualified)
+    type_name,
+    // 2. In current package
+    make_fully_qualified_name(current_package, type_name),
+    // 3. Nested type in current package (e.g., Message.NestedMessage)
+    ..resolve_nested_type_candidates(type_name, current_package, registry)
+  ]
+
+  case
+    list.find(candidates, fn(candidate) {
+      case lookup_type(registry, candidate) {
+        Some(_) -> True
+        None -> False
+      }
+    })
+  {
+    Ok(resolved) -> Ok(resolved)
+    Error(_) ->
+      Error(
+        "Unknown type: "
+        <> type_name
+        <> " (searched in package: "
+        <> current_package
+        <> ")",
+      )
+  }
+}
+
+fn resolve_nested_type_candidates(
+  type_name: String,
+  current_package: String,
+  _registry: TypeRegistry,
+) -> List(String) {
   case string.contains(type_name, ".") {
+    False -> []
     True -> {
-      case lookup_type(registry, type_name) {
-        Some(_) -> Ok(type_name)
-        None -> Error("Unknown type: " <> type_name)
-      }
-    }
-    False -> {
-      let with_package = make_fully_qualified_name(current_package, type_name)
-      case lookup_type(registry, with_package) {
-        Some(_) -> Ok(with_package)
-        None -> {
-          case lookup_type(registry, type_name) {
-            Some(_) -> Ok(type_name)
-            None -> Error("Unknown type: " <> type_name)
-          }
-        }
-      }
+      // For nested types like "OuterMessage.InnerMessage"
+      // Try with current package prefix
+      [make_fully_qualified_name(current_package, type_name)]
     }
   }
 }

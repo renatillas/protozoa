@@ -1,10 +1,8 @@
 import glance
-import gleam/list
 import gleam/string
 import gleeunit
 import protozoa/codegen
 import protozoa/parser
-import protozoa/type_registry
 import simplifile
 
 pub fn main() -> Nil {
@@ -30,34 +28,6 @@ fn compile_test_and_save(
   test_fn(generated)
 }
 
-fn compile_test_and_save_with_imports(
-  proto_content: List(#(String, String)),
-  test_name: String,
-  test_fn: fn(List(#(String, String))) -> Nil,
-) -> Nil {
-  let parsed =
-    list.map(proto_content, fn(name_and_content) {
-      let #(name, content) = name_and_content
-      parser.Path("generated_outputs/" <> name, parser.parse(content))
-    })
-  let registry = type_registry.new()
-  let assert Ok(generated) =
-    codegen.generate_with_imports(
-      parsed,
-      registry,
-      "test/generated_outputs/" <> test_name,
-    )
-
-  list.map(generated, fn(path_and_content) {
-    let #(_, content) = path_and_content
-    // First verify it's valid Gleam code
-    let assert Ok(_) = glance.module(content)
-    Nil
-  })
-
-  // Then run the specific test
-  test_fn(generated)
-}
 
 // Helper function to assert string contains substring
 fn assert_contains(haystack: String, needle: String) -> Nil {

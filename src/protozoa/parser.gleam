@@ -129,25 +129,40 @@ pub fn parse(content: String) -> ProtoFile {
 
 fn find_imports(lines: List(String)) -> List(Import) {
   lines
-  |> list.filter(fn(line) { string.starts_with(line, "import ") })
-  |> list.map(fn(line) {
-    let clean_line =
-      line
-      |> string.replace("import ", "")
-      |> string.replace(";", "")
-      |> string.trim
-
-    let public = string.contains(clean_line, "public ")
-    let weak = string.contains(clean_line, "weak ")
-
-    let path =
-      clean_line
-      |> string.replace("public ", "")
-      |> string.replace("weak ", "")
-      |> string.replace("\"", "")
-      |> string.trim
-
-    Import(path, public, weak)
+  |> list.filter(fn(line) { 
+    let trimmed = string.trim(line)
+    string.starts_with(trimmed, "import ")
+  })
+  |> list.filter_map(fn(line) {
+    let trimmed = string.trim(line)
+    
+    // Remove any trailing comments
+    let clean_line = case string.split(trimmed, "//") {
+      [main, ..] -> main
+      [] -> trimmed
+    }
+    
+    // Check for proper syntax
+    case string.contains(clean_line, "\"") {
+      False -> Error(Nil)
+      True -> {
+        let without_import = string.replace(clean_line, "import ", "")
+        let public = string.starts_with(without_import, "public ")
+        let weak = string.starts_with(without_import, "weak ")
+        
+        let path_part = 
+          without_import
+          |> string.replace("public ", "")
+          |> string.replace("weak ", "")
+          |> string.trim
+        
+        // Extract path between quotes
+        case string.split(path_part, "\"") {
+          [_, path, ..] -> Ok(Import(path, public, weak))
+          _ -> Error(Nil)
+        }
+      }
+    }
   })
 }
 
@@ -224,8 +239,8 @@ fn parse_message(
     |> string.replace(" {", "")
     |> string.trim
   let #(body, remaining) = extract_body(rest, [], 0)
-  let #(oneofs, regular_fields) = parse_message_body(body)
-  #(Some(Message(name, regular_fields, oneofs, [], [])), remaining)
+  let #(oneofs, regular_fields, nested_messages, enums) = parse_message_body(body)
+  #(Some(Message(name, regular_fields, oneofs, nested_messages, enums)), remaining)
 }
 
 fn parse_enum(line: String, rest: List(String)) -> #(Option(Enum), List(String)) {
@@ -278,8 +293,8 @@ fn extract_body(
   }
 }
 
-fn parse_message_body(lines: List(String)) -> #(List(Oneof), List(Field)) {
-  parse_message_body_helper(lines, [], [], None)
+fn parse_message_body(lines: List(String)) -> #(List(Oneof), List(Field), List(Message), List(Enum)) {
+  parse_message_body_helper(lines, [], [], None, [], [])
 }
 
 fn parse_message_body_helper(
@@ -287,7 +302,9 @@ fn parse_message_body_helper(
   oneofs: List(Oneof),
   fields: List(Field),
   current_oneof: Option(#(String, List(Field))),
-) -> #(List(Oneof), List(Field)) {
+  messages: List(Message),
+  enums: List(Enum),
+) -> #(List(Oneof), List(Field), List(Message), List(Enum)) {
   case lines {
     [] -> {
       // Finish any pending oneof
@@ -295,8 +312,10 @@ fn parse_message_body_helper(
         Some(#(name, oneof_fields)) -> #(
           list.reverse([Oneof(name, list.reverse(oneof_fields)), ..oneofs]),
           list.reverse(fields),
+          list.reverse(messages),
+          list.reverse(enums),
         )
-        None -> #(list.reverse(oneofs), list.reverse(fields))
+        None -> #(list.reverse(oneofs), list.reverse(fields), list.reverse(messages), list.reverse(enums))
       }
     }
     [line, ..rest] -> {
@@ -324,6 +343,8 @@ fn parse_message_body_helper(
             new_oneofs,
             fields,
             Some(#(oneof_name, [])),
+            messages,
+            enums,
           )
         }
         False -> {
@@ -336,17 +357,70 @@ fn parse_message_body_helper(
                     Oneof(name, list.reverse(oneof_fields)),
                     ..oneofs
                   ]
-                  parse_message_body_helper(rest, new_oneofs, fields, None)
+                  parse_message_body_helper(rest, new_oneofs, fields, None, messages, enums)
                 }
                 None -> {
                   // This is likely the message closing brace or has already been handled
                   // Continue parsing remaining lines
-                  parse_message_body_helper(rest, oneofs, fields, None)
+                  parse_message_body_helper(rest, oneofs, fields, None, messages, enums)
                 }
               }
             }
             // Regular field or oneof field
             _ -> {
+              // Check for nested message first
+              case string.starts_with(trimmed, "message ") {
+                True -> {
+                  let #(msg, remaining_lines) = parse_message(trimmed, rest)
+                  case msg {
+                    Some(message) -> 
+                      parse_message_body_helper(
+                        remaining_lines, 
+                        oneofs, 
+                        fields, 
+                        current_oneof, 
+                        [message, ..messages], 
+                        enums
+                      )
+                    None -> 
+                      parse_message_body_helper(
+                        remaining_lines, 
+                        oneofs, 
+                        fields, 
+                        current_oneof, 
+                        messages, 
+                        enums
+                      )
+                  }
+                }
+                False -> {
+                  // Check for nested enum
+                  case string.starts_with(trimmed, "enum ") {
+                    True -> {
+                      let #(enum_def, remaining_lines) = parse_enum(trimmed, rest)
+                      case enum_def {
+                        Some(enum_val) -> 
+                          parse_message_body_helper(
+                            remaining_lines, 
+                            oneofs, 
+                            fields, 
+                            current_oneof, 
+                            messages, 
+                            [enum_val, ..enums]
+                          )
+                        None -> 
+                          parse_message_body_helper(
+                            remaining_lines, 
+                            oneofs, 
+                            fields, 
+                            current_oneof, 
+                            messages, 
+                            enums
+                          )
+                      }
+                    }
+                    False -> {
+                      // Regular field parsing
               case parse_field_line(trimmed, current_oneof) {
                 Ok(field) -> {
                   case current_oneof {
@@ -357,6 +431,8 @@ fn parse_message_body_helper(
                         oneofs,
                         fields,
                         Some(#(oneof_name, [field, ..oneof_fields])),
+                        messages,
+                        enums,
                       )
                     None ->
                       // Regular field
@@ -365,12 +441,18 @@ fn parse_message_body_helper(
                         oneofs,
                         [field, ..fields],
                         None,
+                        messages,
+                        enums,
                       )
                   }
                 }
                 Error(_) ->
                   // Skip lines we can't parse
-                  parse_message_body_helper(rest, oneofs, fields, current_oneof)
+                  parse_message_body_helper(rest, oneofs, fields, current_oneof, messages, enums)
+              }
+                    }
+                  }
+                }
               }
             }
           }
