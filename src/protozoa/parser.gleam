@@ -4,6 +4,10 @@ import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 
+pub type Path {
+  Path(path: String, content: ProtoFile)
+}
+
 /// Represents the different types that can be used in Protocol Buffer definitions.
 pub type ProtoType {
   Double
@@ -65,11 +69,16 @@ pub type Message {
   )
 }
 
+pub type Import {
+  Import(path: String, public: Bool, weak: Bool)
+}
+
 /// Represents a parsed Protocol Buffer file.
 pub type ProtoFile {
   ProtoFile(
     syntax: String,
     package: Option(String),
+    imports: List(Import),
     messages: List(Message),
     enums: List(Enum),
   )
@@ -88,9 +97,9 @@ pub type ProtoFile {
 /// 
 /// ```gleam
 /// let proto_content = "syntax = 'proto3'; message Person { string name = 1; }"
-/// let proto_file = parse_simple(proto_content)
+/// let proto_file = parse(proto_content)
 /// ```
-pub fn parse_simple(content: String) -> ProtoFile {
+pub fn parse(content: String) -> ProtoFile {
   let lines =
     content
     |> string.split("\n")
@@ -99,11 +108,12 @@ pub fn parse_simple(content: String) -> ProtoFile {
 
   let syntax = find_syntax(lines)
   let package = find_package(lines)
+  let imports = find_imports(lines)
   let #(messages, enums) = parse_items(lines)
 
   // Post-process messages to correctly identify enum types
   let enum_names = list.map(enums, fn(e) { e.name })
-  let fixed_messages =
+  let messages =
     list.map(messages, fn(msg) {
       Message(
         msg.name,
@@ -114,7 +124,31 @@ pub fn parse_simple(content: String) -> ProtoFile {
       )
     })
 
-  ProtoFile(syntax, package, fixed_messages, enums)
+  ProtoFile(syntax:, package:, messages:, enums:, imports:)
+}
+
+fn find_imports(lines: List(String)) -> List(Import) {
+  lines
+  |> list.filter(fn(line) { string.starts_with(line, "import ") })
+  |> list.map(fn(line) {
+    let clean_line =
+      line
+      |> string.replace("import ", "")
+      |> string.replace(";", "")
+      |> string.trim
+
+    let public = string.contains(clean_line, "public ")
+    let weak = string.contains(clean_line, "weak ")
+
+    let path =
+      clean_line
+      |> string.replace("public ", "")
+      |> string.replace("weak ", "")
+      |> string.replace("\"", "")
+      |> string.trim
+
+    Import(path, public, weak)
+  })
 }
 
 fn find_syntax(lines: List(String)) -> String {

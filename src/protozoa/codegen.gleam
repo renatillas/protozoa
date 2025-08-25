@@ -1,11 +1,199 @@
-/// Code generator module that produces Gleam code from Protocol Buffer definitions.
-/// Uses the composable decode module for type-safe decoding.
+//// Code generator module that produces Gleam code from Protocol Buffer definitions.
+//// Uses the composable decode module for type-safe decoding.
+
 import gleam/int
 import gleam/list
+import gleam/option
+import gleam/result
 import gleam/set
 import gleam/string
-import protozoa/proto_parser.{
-  type Enum, type Field, type Message, type ProtoFile, type ProtoType,
+import protozoa/parser.{
+  type Enum, type Field, type Message, type Path, type ProtoFile, type ProtoType,
+}
+import protozoa/type_registry.{type TypeRegistry}
+import simplifile
+
+pub fn generate_with_imports(
+  files files: List(Path),
+  registry registry: TypeRegistry,
+  output_dir output_dir: String,
+) -> Result(List(#(String, String)), String) {
+  // Generate code for each proto file
+  list.try_map(files, fn(file_entry) {
+    // Get the base name for the output file
+    let base_name = get_base_name(file_entry.path)
+    let output_path = output_dir <> "/" <> base_name <> ".gleam"
+
+    // Generate code with cross-file imports
+    use code <- result.try(generate_file_with_imports(
+      file_entry.content,
+      file_entry.path,
+      registry,
+    ))
+
+    // Write the generated file
+    use _ <- result.try(
+      simplifile.write(output_path, code)
+      |> result.map_error(fn(_) { "Failed to write file: " <> output_path }),
+    )
+
+    Ok(#(output_path, code))
+  })
+}
+
+fn generate_file_with_imports(
+  proto_file: ProtoFile,
+  file_path: String,
+  registry: TypeRegistry,
+) -> Result(String, String) {
+  // Get all external types referenced in this file
+  let external_refs = find_external_references(proto_file, file_path, registry)
+
+  // Generate import statements for external types
+  let extra_imports =
+    generate_cross_file_imports(external_refs, file_path, registry)
+
+  // Generate the code with awareness of external types
+  let imports = generate_smart_imports_with_externals(proto_file, extra_imports)
+  let enum_types = generate_enum_types(proto_file.enums)
+  let types =
+    generate_types_with_registry(proto_file.messages, registry, file_path)
+  let encoders =
+    generate_encoders_with_registry(proto_file.messages, registry, file_path)
+  let decoders =
+    generate_decoders_with_registry(proto_file.messages, registry, file_path)
+  let enum_helpers = generate_enum_helpers(proto_file.enums)
+
+  Ok(string.join(
+    [
+      imports,
+      "",
+      enum_types,
+      "",
+      types,
+      "",
+      encoders,
+      "",
+      decoders,
+      "",
+      enum_helpers,
+    ],
+    "\n",
+  ))
+}
+
+fn get_base_name(file_path: String) -> String {
+  file_path
+  |> string.split("/")
+  |> list.last()
+  |> result.unwrap("")
+  |> string.split(".")
+  |> list.first()
+  |> result.unwrap("generated")
+}
+
+fn find_external_references(
+  proto_file: ProtoFile,
+  file_path: String,
+  registry: TypeRegistry,
+) -> List(#(String, String)) {
+  // Find all type references in messages
+  let refs =
+    list.flat_map(proto_file.messages, fn(msg) {
+      list.flat_map(msg.fields, fn(field) {
+        extract_type_references(field.field_type)
+      })
+    })
+
+  // Filter to only external types
+  list.filter_map(refs, fn(type_name) {
+    case
+      type_registry.resolve_type_reference(
+        type_name,
+        option.unwrap(proto_file.package, ""),
+        registry,
+      )
+    {
+      Ok(fqn) -> {
+        case type_registry.get_type_source(registry, fqn) {
+          option.Some(source) if source != file_path -> {
+            Ok(#(fqn, source))
+          }
+          _ -> Error(Nil)
+        }
+      }
+      Error(_) -> Error(Nil)
+    }
+  })
+  |> list.unique()
+}
+
+fn extract_type_references(proto_type: ProtoType) -> List(String) {
+  case proto_type {
+    parser.MessageType(name) -> [name]
+    parser.EnumType(name) -> [name]
+    parser.Repeated(inner) -> extract_type_references(inner)
+    parser.Optional(inner) -> extract_type_references(inner)
+    parser.Map(_, value_type) -> extract_type_references(value_type)
+    _ -> []
+  }
+}
+
+fn generate_cross_file_imports(
+  external_refs: List(#(String, String)),
+  current_file: String,
+  registry: TypeRegistry,
+) -> List(String) {
+  external_refs
+  |> list.map(fn(ref) {
+    let #(_fqn, source_file) = ref
+    let module_name = get_base_name(source_file)
+    "import generated/" <> module_name
+  })
+  |> list.unique()
+}
+
+fn generate_smart_imports_with_externals(
+  proto_file: ProtoFile,
+  extra_imports: List(String),
+) -> String {
+  let base_imports = generate_smart_imports(proto_file)
+  case extra_imports {
+    [] -> base_imports
+    imports -> {
+      base_imports <> "\n" <> string.join(imports, "\n")
+    }
+  }
+}
+
+fn generate_types_with_registry(
+  messages: List(Message),
+  registry: TypeRegistry,
+  file_path: String,
+) -> String {
+  // Use existing generate_types for now
+  // TODO: Update to use registry for type resolution
+  generate_types(messages)
+}
+
+fn generate_encoders_with_registry(
+  messages: List(Message),
+  registry: TypeRegistry,
+  file_path: String,
+) -> String {
+  // Use existing generate_encoders for now
+  // TODO: Update to use registry for type resolution
+  generate_encoders(messages)
+}
+
+fn generate_decoders_with_registry(
+  messages: List(Message),
+  registry: TypeRegistry,
+  file_path: String,
+) -> String {
+  // Use existing generate_decoders for now
+  // TODO: Update to use registry for type resolution
+  generate_decoders(messages)
 }
 
 /// Generates Gleam code from a parsed Protocol Buffer file.
@@ -14,7 +202,7 @@ import protozoa/proto_parser.{
 /// ## Examples
 /// 
 /// ```gleam
-/// let proto_file = proto_parser.parse_simple(proto_content)
+/// let proto_file = parser.parse(proto_content)
 /// let gleam_code = generate_simple(proto_file)
 /// ```
 pub fn generate_simple(proto_file: ProtoFile) -> String {
@@ -49,7 +237,7 @@ fn generate_smart_imports(proto_file: ProtoFile) -> String {
     list.any(proto_file.messages, fn(msg) {
       list.any(msg.fields, fn(field) {
         case field.field_type {
-          proto_parser.Repeated(_) -> True
+          parser.Repeated(_) -> True
           _ -> False
         }
       })
@@ -59,7 +247,7 @@ fn generate_smart_imports(proto_file: ProtoFile) -> String {
     list.any(proto_file.messages, fn(msg) {
       list.any(msg.fields, fn(field) {
         case field.field_type {
-          proto_parser.Optional(_) -> True
+          parser.Optional(_) -> True
           _ -> False
         }
       })
@@ -73,7 +261,7 @@ fn generate_smart_imports(proto_file: ProtoFile) -> String {
     list.any(proto_file.messages, fn(msg) {
       list.any(msg.fields, fn(field) {
         case field.field_type {
-          proto_parser.Map(_, _) -> True
+          parser.Map(_, _) -> True
           _ -> False
         }
       })
@@ -85,10 +273,10 @@ fn generate_smart_imports(proto_file: ProtoFile) -> String {
       let has_special_fields =
         list.any(msg.fields, fn(field) {
           case field.field_type {
-            proto_parser.Bytes -> True
-            proto_parser.MessageType(_) -> True
-            proto_parser.Optional(proto_parser.MessageType(_)) -> True
-            proto_parser.Map(_, _) -> True
+            parser.Bytes -> True
+            parser.MessageType(_) -> True
+            parser.Optional(parser.MessageType(_)) -> True
+            parser.Map(_, _) -> True
             _ -> False
           }
         })
@@ -98,7 +286,7 @@ fn generate_smart_imports(proto_file: ProtoFile) -> String {
         list.any(msg.oneofs, fn(oneof) {
           list.any(oneof.fields, fn(field) {
             case field.field_type {
-              proto_parser.MessageType(_) -> True
+              parser.MessageType(_) -> True
               _ -> False
             }
           })
@@ -117,6 +305,7 @@ fn generate_smart_imports(proto_file: ProtoFile) -> String {
     |> add_to_set_if_used(has_enums, "import gleam/int")
     |> add_to_set_if_used(has_enums, "import gleam/result")
     |> add_to_set_if_used(has_oneof, "import gleam/dict")
+    |> add_to_set_if_used(has_oneof, "import gleam/option")
     |> add_to_set_if_used(has_repeated, "import gleam/list")
     |> add_to_set_if_used(needs_wire, "import protozoa/wire")
     |> add_to_set_if_used(has_map, "import gleam/list")
@@ -131,7 +320,7 @@ fn generate_smart_imports(proto_file: ProtoFile) -> String {
   )
 }
 
-pub fn add_to_set_if_used(
+fn add_to_set_if_used(
   imports: set.Set(String),
   condition: Bool,
   import_: String,
@@ -168,7 +357,7 @@ fn generate_message_type(message: Message) -> List(String) {
     message.oneofs
     |> list.map(fn(oneof) {
       let oneof_type = message.name <> capitalize_first(oneof.name)
-      "  " <> oneof.name <> ": Result(" <> oneof_type <> ", Nil)"
+      "  " <> oneof.name <> ": option.Option(" <> oneof_type <> ")"
     })
 
   let all_fields = list.append(regular_fields, oneof_fields)
@@ -186,10 +375,7 @@ fn generate_message_type(message: Message) -> List(String) {
   list.append(oneof_types, [message_type])
 }
 
-fn generate_oneof_type(
-  message_name: String,
-  oneof: proto_parser.Oneof,
-) -> String {
+fn generate_oneof_type(message_name: String, oneof: parser.Oneof) -> String {
   let type_name = message_name <> capitalize_first(oneof.name)
 
   let variants =
@@ -218,27 +404,25 @@ fn capitalize_first(str: String) -> String {
 
 fn gleam_type_for_proto(proto_type: ProtoType) -> String {
   case proto_type {
-    proto_parser.Double | proto_parser.Float -> "Float"
-    proto_parser.Int32
-    | proto_parser.Int64
-    | proto_parser.UInt32
-    | proto_parser.UInt64
-    | proto_parser.SInt32
-    | proto_parser.SInt64
-    | proto_parser.Fixed32
-    | proto_parser.Fixed64
-    | proto_parser.SFixed32
-    | proto_parser.SFixed64 -> "Int"
-    proto_parser.Bool -> "Bool"
-    proto_parser.String -> "String"
-    proto_parser.Bytes -> "BitArray"
-    proto_parser.MessageType(name) -> name
-    proto_parser.EnumType(name) -> name
-    proto_parser.Repeated(inner) ->
-      "List(" <> gleam_type_for_proto(inner) <> ")"
-    proto_parser.Optional(inner) ->
-      "Option(" <> gleam_type_for_proto(inner) <> ")"
-    proto_parser.Map(key, value) ->
+    parser.Double | parser.Float -> "Float"
+    parser.Int32
+    | parser.Int64
+    | parser.UInt32
+    | parser.UInt64
+    | parser.SInt32
+    | parser.SInt64
+    | parser.Fixed32
+    | parser.Fixed64
+    | parser.SFixed32
+    | parser.SFixed64 -> "Int"
+    parser.Bool -> "Bool"
+    parser.String -> "String"
+    parser.Bytes -> "BitArray"
+    parser.MessageType(name) -> name
+    parser.EnumType(name) -> name
+    parser.Repeated(inner) -> "List(" <> gleam_type_for_proto(inner) <> ")"
+    parser.Optional(inner) -> "Option(" <> gleam_type_for_proto(inner) <> ")"
+    parser.Map(key, value) ->
       "List(#("
       <> gleam_type_for_proto(key)
       <> ", "
@@ -269,7 +453,7 @@ fn generate_message_encoder(message: Message) -> String {
   let #(repeated_fields, non_repeated) =
     list.partition(message.fields, fn(field) {
       case field.field_type {
-        proto_parser.Repeated(_) -> True
+        parser.Repeated(_) -> True
         _ -> False
       }
     })
@@ -277,7 +461,7 @@ fn generate_message_encoder(message: Message) -> String {
   let #(map_fields, regular_fields) =
     list.partition(non_repeated, fn(field) {
       case field.field_type {
-        proto_parser.Map(_, _) -> True
+        parser.Map(_, _) -> True
         _ -> False
       }
     })
@@ -398,44 +582,44 @@ fn generate_field_encoder(field: Field, param_name: String) -> String {
   let field_num = int.to_string(field.number)
 
   case field.field_type {
-    proto_parser.Int32 ->
+    parser.Int32 ->
       "encode.int32_field(" <> field_num <> ", " <> field_access <> ")"
 
-    proto_parser.Int64 ->
+    parser.Int64 ->
       "encode.int64_field(" <> field_num <> ", " <> field_access <> ")"
 
-    proto_parser.UInt32 ->
+    parser.UInt32 ->
       "encode.uint32_field(" <> field_num <> ", " <> field_access <> ")"
 
-    proto_parser.UInt64 ->
+    parser.UInt64 ->
       "encode.uint64_field(" <> field_num <> ", " <> field_access <> ")"
 
-    proto_parser.SInt32 ->
+    parser.SInt32 ->
       "encode.sint32_field(" <> field_num <> ", " <> field_access <> ")"
 
-    proto_parser.SInt64 ->
+    parser.SInt64 ->
       "encode.sint64_field(" <> field_num <> ", " <> field_access <> ")"
 
-    proto_parser.Float ->
+    parser.Float ->
       "encode.float_field(" <> field_num <> ", " <> field_access <> ")"
 
-    proto_parser.Double ->
+    parser.Double ->
       "encode.double_field(" <> field_num <> ", " <> field_access <> ")"
 
-    proto_parser.Bool ->
+    parser.Bool ->
       "encode.bool_field(" <> field_num <> ", " <> field_access <> ")"
 
-    proto_parser.String ->
+    parser.String ->
       "encode.string_field(" <> field_num <> ", " <> field_access <> ")"
 
-    proto_parser.Bytes ->
+    parser.Bytes ->
       "encode.field("
       <> field_num
       <> ", wire.LengthDelimited, encode.length_delimited("
       <> field_access
       <> "))"
 
-    proto_parser.MessageType(type_name) -> {
+    parser.MessageType(type_name) -> {
       let encoder_name = "encode_" <> string.lowercase(type_name)
       "encode.field("
       <> field_num
@@ -446,7 +630,7 @@ fn generate_field_encoder(field: Field, param_name: String) -> String {
       <> ")))"
     }
 
-    proto_parser.EnumType(enum_name) -> {
+    parser.EnumType(enum_name) -> {
       let encoder_name = "encode_" <> string.lowercase(enum_name) <> "_value"
       "encode.int32_field("
       <> field_num
@@ -457,12 +641,12 @@ fn generate_field_encoder(field: Field, param_name: String) -> String {
       <> "))"
     }
 
-    proto_parser.Repeated(_) -> {
+    parser.Repeated(_) -> {
       // Handled separately
       "// Repeated field handled separately"
     }
 
-    proto_parser.Optional(inner) -> {
+    parser.Optional(inner) -> {
       // Generate encoder for optional field
       "case " <> field_access <> " {
         Some(value) -> " <> generate_optional_field_encoder(
@@ -474,7 +658,7 @@ fn generate_field_encoder(field: Field, param_name: String) -> String {
       }"
     }
 
-    proto_parser.Map(key_type, value_type) -> {
+    parser.Map(key_type, value_type) -> {
       // Maps are encoded as repeated message fields with key and value
       generate_map_field_encoder(field, key_type, value_type, param_name)
     }
@@ -485,7 +669,7 @@ fn generate_field_encoder(field: Field, param_name: String) -> String {
 
 fn generate_map_field_code(field: Field, param_name: String) -> String {
   case field.field_type {
-    proto_parser.Map(key_type, value_type) -> {
+    parser.Map(key_type, value_type) -> {
       let field_access = param_name <> "." <> field.name
       let field_var = string.lowercase(field.name) <> "_fields"
       let field_num = int.to_string(field.number)
@@ -528,29 +712,29 @@ fn generate_map_field_encoder(
 
 fn generate_map_key_encoder(key_type: ProtoType, access: String) -> String {
   case key_type {
-    proto_parser.String -> "encode.string_field(1, " <> access <> ")"
-    proto_parser.Int32
-    | proto_parser.Int64
-    | proto_parser.UInt32
-    | proto_parser.UInt64
-    | proto_parser.SInt32
-    | proto_parser.SInt64 -> "encode.int32_field(1, " <> access <> ")"
-    proto_parser.Bool -> "encode.bool_field(1, " <> access <> ")"
+    parser.String -> "encode.string_field(1, " <> access <> ")"
+    parser.Int32
+    | parser.Int64
+    | parser.UInt32
+    | parser.UInt64
+    | parser.SInt32
+    | parser.SInt64 -> "encode.int32_field(1, " <> access <> ")"
+    parser.Bool -> "encode.bool_field(1, " <> access <> ")"
     _ -> "// TODO: Unsupported map key type"
   }
 }
 
 fn generate_map_value_encoder(value_type: ProtoType, access: String) -> String {
   case value_type {
-    proto_parser.String -> "encode.string_field(2, " <> access <> ")"
-    proto_parser.Int32
-    | proto_parser.Int64
-    | proto_parser.UInt32
-    | proto_parser.UInt64
-    | proto_parser.SInt32
-    | proto_parser.SInt64 -> "encode.int32_field(2, " <> access <> ")"
-    proto_parser.Bool -> "encode.bool_field(2, " <> access <> ")"
-    proto_parser.MessageType(type_name) -> {
+    parser.String -> "encode.string_field(2, " <> access <> ")"
+    parser.Int32
+    | parser.Int64
+    | parser.UInt32
+    | parser.UInt64
+    | parser.SInt32
+    | parser.SInt64 -> "encode.int32_field(2, " <> access <> ")"
+    parser.Bool -> "encode.bool_field(2, " <> access <> ")"
+    parser.MessageType(type_name) -> {
       let encoder_name = "encode_" <> string.lowercase(type_name)
       "encode.field(2, wire.LengthDelimited, encode.length_delimited("
       <> encoder_name
@@ -572,7 +756,7 @@ fn generate_optional_field_encoder(
 
 fn generate_oneof_encoder(
   _message_name: String,
-  oneof: proto_parser.Oneof,
+  oneof: parser.Oneof,
   param_name: String,
 ) -> String {
   let oneof_access = param_name <> "." <> oneof.name
@@ -589,12 +773,12 @@ fn generate_oneof_encoder(
     |> string.join("\n")
 
   "case " <> oneof_access <> " {
-    Ok(oneof_value) -> {
+    option.Some(oneof_value) -> {
       case oneof_value {
 " <> cases <> "
       }
     }
-    Error(_) -> <<>>
+    option.None -> <<>>
   }"
 }
 
@@ -606,44 +790,44 @@ fn generate_field_encoder_for_type(
   let num_str = int.to_string(field_num)
 
   case field_type {
-    proto_parser.Int32 ->
+    parser.Int32 ->
       "encode.int32_field(" <> num_str <> ", " <> value_access <> ")"
 
-    proto_parser.Int64 ->
+    parser.Int64 ->
       "encode.int64_field(" <> num_str <> ", " <> value_access <> ")"
 
-    proto_parser.UInt32 ->
+    parser.UInt32 ->
       "encode.uint32_field(" <> num_str <> ", " <> value_access <> ")"
 
-    proto_parser.UInt64 ->
+    parser.UInt64 ->
       "encode.uint64_field(" <> num_str <> ", " <> value_access <> ")"
 
-    proto_parser.SInt32 ->
+    parser.SInt32 ->
       "encode.sint32_field(" <> num_str <> ", " <> value_access <> ")"
 
-    proto_parser.SInt64 ->
+    parser.SInt64 ->
       "encode.sint64_field(" <> num_str <> ", " <> value_access <> ")"
 
-    proto_parser.Float ->
+    parser.Float ->
       "encode.float_field(" <> num_str <> ", " <> value_access <> ")"
 
-    proto_parser.Double ->
+    parser.Double ->
       "encode.double_field(" <> num_str <> ", " <> value_access <> ")"
 
-    proto_parser.Bool ->
+    parser.Bool ->
       "encode.bool_field(" <> num_str <> ", " <> value_access <> ")"
 
-    proto_parser.String ->
+    parser.String ->
       "encode.string_field(" <> num_str <> ", " <> value_access <> ")"
 
-    proto_parser.Bytes ->
+    parser.Bytes ->
       "encode.field("
       <> num_str
       <> ", wire.LengthDelimited, encode.length_delimited("
       <> value_access
       <> "))"
 
-    proto_parser.MessageType(type_name) -> {
+    parser.MessageType(type_name) -> {
       let encoder_name = "encode_" <> string.lowercase(type_name)
       "encode.field("
       <> num_str
@@ -654,7 +838,7 @@ fn generate_field_encoder_for_type(
       <> ")))"
     }
 
-    proto_parser.EnumType(enum_name) -> {
+    parser.EnumType(enum_name) -> {
       let encoder_name = "encode_" <> string.lowercase(enum_name) <> "_value"
       "encode.int32_field("
       <> num_str
@@ -675,7 +859,7 @@ fn generate_repeated_field_code(field: Field, param_name: String) -> String {
   let num_str = int.to_string(field.number)
 
   case field.field_type {
-    proto_parser.Repeated(proto_parser.String) ->
+    parser.Repeated(parser.String) ->
       "let "
       <> field_var
       <> " = list.map("
@@ -683,7 +867,7 @@ fn generate_repeated_field_code(field: Field, param_name: String) -> String {
       <> ", fn(v) { encode.string_field("
       <> num_str
       <> ", v) })"
-    proto_parser.Repeated(proto_parser.Int32) ->
+    parser.Repeated(parser.Int32) ->
       "let "
       <> field_var
       <> " = list.map("
@@ -691,7 +875,7 @@ fn generate_repeated_field_code(field: Field, param_name: String) -> String {
       <> ", fn(v) { encode.int32_field("
       <> num_str
       <> ", v) })"
-    proto_parser.Repeated(proto_parser.Int64) ->
+    parser.Repeated(parser.Int64) ->
       "let "
       <> field_var
       <> " = list.map("
@@ -699,7 +883,7 @@ fn generate_repeated_field_code(field: Field, param_name: String) -> String {
       <> ", fn(v) { encode.int64_field("
       <> num_str
       <> ", v) })"
-    proto_parser.Repeated(proto_parser.EnumType(enum_name)) ->
+    parser.Repeated(parser.EnumType(enum_name)) ->
       "let "
       <> field_var
       <> " = list.map("
@@ -737,7 +921,7 @@ fn generate_message_decoder_composable(message: Message) -> String {
     message.fields
     |> list.filter_map(fn(field) {
       case field.field_type {
-        proto_parser.Map(key_type, value_type) ->
+        parser.Map(key_type, value_type) ->
           Ok(generate_map_entry_decoder(field.number, key_type, value_type))
         _ -> Error(Nil)
       }
@@ -812,10 +996,7 @@ fn generate_decoder_body(message: Message) -> String {
   }
 }
 
-fn generate_oneof_decoder(
-  _message_name: String,
-  oneof: proto_parser.Oneof,
-) -> String {
+fn generate_oneof_decoder(_message_name: String, oneof: parser.Oneof) -> String {
   // Generate a call to a helper decoder function
   let decoder_name = "oneof_" <> string.lowercase(oneof.name) <> "_decoder()"
   decoder_name
@@ -823,7 +1004,7 @@ fn generate_oneof_decoder(
 
 fn generate_oneof_helper_decoder(
   message_name: String,
-  oneof: proto_parser.Oneof,
+  oneof: parser.Oneof,
 ) -> String {
   // Generate the oneof type name
   let oneof_type = message_name <> capitalize_first(oneof.name)
@@ -844,9 +1025,9 @@ fn generate_oneof_helper_decoder(
     [] ->
       "fn "
       <> decoder_name
-      <> "() -> decode.Decoder(Result("
+      <> "() -> decode.Decoder(option.Option("
       <> oneof_type
-      <> ", Nil)) {
+      <> ")) {
   decode.success(Error(Nil))
 }"
     _ -> {
@@ -856,9 +1037,9 @@ fn generate_oneof_helper_decoder(
 
       "fn "
       <> decoder_name
-      <> "() -> decode.Decoder(Result("
+      <> "() -> decode.Decoder(option.Option("
       <> oneof_type
-      <> ", Nil)) {
+      <> ")) {
   decode.from_field_dict(fn(fields) {
 "
       <> decoder_body
@@ -875,24 +1056,24 @@ fn build_oneof_decoder_body(
   indent: String,
 ) -> String {
   case fields {
-    [] -> indent <> "Ok(Error(Nil))"
+    [] -> indent <> "Ok(option.None)"
     [#(field_num, decoder, variant)] -> {
       indent <> "case dict.get(fields, " <> field_num <> ") {
 " <> indent <> "  Ok([field, ..]) -> {
 " <> indent <> "    case " <> decoder <> "(field) {
-" <> indent <> "      Ok(value) -> Ok(Ok(" <> variant <> "(value)))
-" <> indent <> "      Error(_) -> Ok(Error(Nil))
+" <> indent <> "      Ok(value) -> Ok(option.Some(" <> variant <> "(value)))
+" <> indent <> "      Error(_) -> Ok(option.None)
 " <> indent <> "    }
 " <> indent <> "  }
-" <> indent <> "  Ok([]) -> Ok(Error(Nil))
-" <> indent <> "  Error(_) -> Ok(Error(Nil))
+" <> indent <> "  Ok([]) -> Ok(option.None)
+" <> indent <> "  Error(_) -> Ok(option.None)
 " <> indent <> "}"
     }
     [#(field_num, decoder, variant), ..rest] -> {
       indent <> "case dict.get(fields, " <> field_num <> ") {
 " <> indent <> "  Ok([field, ..]) -> {
 " <> indent <> "    case " <> decoder <> "(field) {
-" <> indent <> "      Ok(value) -> Ok(Ok(" <> variant <> "(value)))
+" <> indent <> "      Ok(value) -> Ok(option.Some(" <> variant <> "(value)))
 " <> indent <> "      Error(_) -> {
 " <> build_oneof_decoder_body(rest, oneof_type, indent <> "        ") <> "
 " <> indent <> "      }
@@ -908,14 +1089,14 @@ fn build_oneof_decoder_body(
 
 fn generate_oneof_field_decoder(field: Field) -> String {
   case field.field_type {
-    proto_parser.Int32 -> "decode.int32_field"
-    proto_parser.Int64 -> "decode.int64_field"
-    proto_parser.String -> "decode.string_field"
-    proto_parser.Bool -> "decode.bool_field"
-    proto_parser.Bytes -> "decode.bytes_field"
-    proto_parser.Float -> "decode.float_field"
-    proto_parser.Double -> "decode.double_field"
-    proto_parser.MessageType(type_name) ->
+    parser.Int32 -> "decode.int32_field"
+    parser.Int64 -> "decode.int64_field"
+    parser.String -> "decode.string_field"
+    parser.Bool -> "decode.bool_field"
+    parser.Bytes -> "decode.bytes_field"
+    parser.Float -> "decode.float_field"
+    parser.Double -> "decode.double_field"
+    parser.MessageType(type_name) ->
       "fn(f) { decode.message_field(f, "
       <> string.lowercase(type_name)
       <> "_decoder()) }"
@@ -928,60 +1109,59 @@ fn generate_field_decoder_composable(field: Field) -> String {
   let field_num = int.to_string(field.number)
 
   case field.field_type {
-    proto_parser.Int32 -> "decode.int32_with_default(" <> field_num <> ", 0)"
+    parser.Int32 -> "decode.int32_with_default(" <> field_num <> ", 0)"
 
-    proto_parser.Int64 -> "decode.int64_with_default(" <> field_num <> ", 0)"
+    parser.Int64 -> "decode.int64_with_default(" <> field_num <> ", 0)"
 
-    proto_parser.UInt32 -> "decode.uint32_with_default(" <> field_num <> ", 0)"
+    parser.UInt32 -> "decode.uint32_with_default(" <> field_num <> ", 0)"
 
-    proto_parser.UInt64 -> "decode.uint64_with_default(" <> field_num <> ", 0)"
+    parser.UInt64 -> "decode.uint64_with_default(" <> field_num <> ", 0)"
 
-    proto_parser.SInt32 -> "decode.sint32(" <> field_num <> ")"
+    parser.SInt32 -> "decode.sint32(" <> field_num <> ")"
 
-    proto_parser.SInt64 -> "decode.sint64(" <> field_num <> ")"
+    parser.SInt64 -> "decode.sint64(" <> field_num <> ")"
 
-    proto_parser.Float -> "decode.float(" <> field_num <> ")"
+    parser.Float -> "decode.float(" <> field_num <> ")"
 
-    proto_parser.Double -> "decode.double(" <> field_num <> ")"
+    parser.Double -> "decode.double(" <> field_num <> ")"
 
-    proto_parser.Bool -> "decode.bool_with_default(" <> field_num <> ", False)"
+    parser.Bool -> "decode.bool_with_default(" <> field_num <> ", False)"
 
-    proto_parser.String ->
-      "decode.string_with_default(" <> field_num <> ", \"\")"
+    parser.String -> "decode.string_with_default(" <> field_num <> ", \"\")"
 
-    proto_parser.Bytes -> "decode.bytes(" <> field_num <> ")"
+    parser.Bytes -> "decode.bytes(" <> field_num <> ")"
 
-    proto_parser.MessageType(type_name) ->
+    parser.MessageType(type_name) ->
       "decode.nested_message("
       <> field_num
       <> ", "
       <> string.lowercase(type_name)
       <> "_decoder())"
 
-    proto_parser.EnumType(enum_name) -> {
+    parser.EnumType(enum_name) -> {
       let decoder_name = "decode_" <> string.lowercase(enum_name) <> "_field"
       decoder_name <> "(" <> field_num <> ")"
     }
 
-    proto_parser.Repeated(proto_parser.String) ->
+    parser.Repeated(parser.String) ->
       "decode.repeated_string(" <> field_num <> ")"
 
-    proto_parser.Repeated(proto_parser.Int32) ->
+    parser.Repeated(parser.Int32) ->
       "decode.repeated_int32(" <> field_num <> ")"
 
-    proto_parser.Repeated(proto_parser.Int64) ->
+    parser.Repeated(parser.Int64) ->
       "decode.repeated_int64(" <> field_num <> ")"
 
-    proto_parser.Repeated(proto_parser.EnumType(enum_name)) -> {
+    parser.Repeated(parser.EnumType(enum_name)) -> {
       let decoder_name = "decode_repeated_" <> string.lowercase(enum_name)
       decoder_name <> "(" <> field_num <> ")"
     }
 
-    proto_parser.Optional(inner) -> {
+    parser.Optional(inner) -> {
       generate_optional_field_decoder(inner, field.number)
     }
 
-    proto_parser.Map(key_type, value_type) ->
+    parser.Map(key_type, value_type) ->
       generate_map_field_decoder(field.number, key_type, value_type)
 
     _ -> "decode.fail(\"Unsupported field type\")"
@@ -1027,29 +1207,29 @@ fn generate_map_entry_decoder(
 
 fn generate_map_key_decoder(key_type: ProtoType) -> String {
   case key_type {
-    proto_parser.String -> "decode.string_with_default(1, \"\")"
-    proto_parser.Int32 -> "decode.int32_with_default(1, 0)"
-    proto_parser.Int64 -> "decode.int64_with_default(1, 0)"
-    proto_parser.UInt32 -> "decode.uint32_with_default(1, 0)"
-    proto_parser.UInt64 -> "decode.uint64_with_default(1, 0)"
-    proto_parser.SInt32 -> "decode.sint32(1)"
-    proto_parser.SInt64 -> "decode.sint64(1)"
-    proto_parser.Bool -> "decode.bool_with_default(1, False)"
+    parser.String -> "decode.string_with_default(1, \"\")"
+    parser.Int32 -> "decode.int32_with_default(1, 0)"
+    parser.Int64 -> "decode.int64_with_default(1, 0)"
+    parser.UInt32 -> "decode.uint32_with_default(1, 0)"
+    parser.UInt64 -> "decode.uint64_with_default(1, 0)"
+    parser.SInt32 -> "decode.sint32(1)"
+    parser.SInt64 -> "decode.sint64(1)"
+    parser.Bool -> "decode.bool_with_default(1, False)"
     _ -> "decode.fail(\"Unsupported map key type\")"
   }
 }
 
 fn generate_map_value_decoder(value_type: ProtoType) -> String {
   case value_type {
-    proto_parser.String -> "decode.string_with_default(2, \"\")"
-    proto_parser.Int32 -> "decode.int32_with_default(2, 0)"
-    proto_parser.Int64 -> "decode.int64_with_default(2, 0)"
-    proto_parser.UInt32 -> "decode.uint32_with_default(2, 0)"
-    proto_parser.UInt64 -> "decode.uint64_with_default(2, 0)"
-    proto_parser.SInt32 -> "decode.sint32(2)"
-    proto_parser.SInt64 -> "decode.sint64(2)"
-    proto_parser.Bool -> "decode.bool_with_default(2, False)"
-    proto_parser.MessageType(type_name) ->
+    parser.String -> "decode.string_with_default(2, \"\")"
+    parser.Int32 -> "decode.int32_with_default(2, 0)"
+    parser.Int64 -> "decode.int64_with_default(2, 0)"
+    parser.UInt32 -> "decode.uint32_with_default(2, 0)"
+    parser.UInt64 -> "decode.uint64_with_default(2, 0)"
+    parser.SInt32 -> "decode.sint32(2)"
+    parser.SInt64 -> "decode.sint64(2)"
+    parser.Bool -> "decode.bool_with_default(2, False)"
+    parser.MessageType(type_name) ->
       "decode.nested_message(2, "
       <> string.lowercase(type_name)
       <> "_decoder())"
@@ -1065,7 +1245,7 @@ fn generate_optional_field_decoder(
 
   // For optional fields, we'll use field_with_default and wrap in Option
   case field_type {
-    proto_parser.Int32 ->
+    parser.Int32 ->
       "decode.optional_field(" <> num_str <> ", decode.int32_field)
       |> decode.map(fn(opt) {
         case opt {
@@ -1074,7 +1254,7 @@ fn generate_optional_field_decoder(
         }
       })"
 
-    proto_parser.Int64 ->
+    parser.Int64 ->
       "decode.optional_field(" <> num_str <> ", decode.int64_field)
       |> decode.map(fn(opt) {
         case opt {
@@ -1083,7 +1263,7 @@ fn generate_optional_field_decoder(
         }
       })"
 
-    proto_parser.UInt32 ->
+    parser.UInt32 ->
       "decode.optional_field(" <> num_str <> ", decode.uint32_field)
       |> decode.map(fn(opt) {
         case opt {
@@ -1092,7 +1272,7 @@ fn generate_optional_field_decoder(
         }
       })"
 
-    proto_parser.UInt64 ->
+    parser.UInt64 ->
       "decode.optional_field(" <> num_str <> ", decode.uint64_field)
       |> decode.map(fn(opt) {
         case opt {
@@ -1101,7 +1281,7 @@ fn generate_optional_field_decoder(
         }
       })"
 
-    proto_parser.SInt32 ->
+    parser.SInt32 ->
       "decode.optional_field(" <> num_str <> ", decode.sint32_field)
       |> decode.map(fn(opt) {
         case opt {
@@ -1110,7 +1290,7 @@ fn generate_optional_field_decoder(
         }
       })"
 
-    proto_parser.SInt64 ->
+    parser.SInt64 ->
       "decode.optional_field(" <> num_str <> ", decode.sint64_field)
       |> decode.map(fn(opt) {
         case opt {
@@ -1119,7 +1299,7 @@ fn generate_optional_field_decoder(
         }
       })"
 
-    proto_parser.Float ->
+    parser.Float ->
       "decode.optional_field(" <> num_str <> ", decode.float_field)
       |> decode.map(fn(opt) {
         case opt {
@@ -1128,7 +1308,7 @@ fn generate_optional_field_decoder(
         }
       })"
 
-    proto_parser.Double ->
+    parser.Double ->
       "decode.optional_field(" <> num_str <> ", decode.double_field)
       |> decode.map(fn(opt) {
         case opt {
@@ -1137,8 +1317,7 @@ fn generate_optional_field_decoder(
         }
       })"
 
-    proto_parser.Bool ->
-      "decode.optional_field(" <> num_str <> ", decode.bool_field)
+    parser.Bool -> "decode.optional_field(" <> num_str <> ", decode.bool_field)
       |> decode.map(fn(opt) {
         case opt {
           Ok(value) -> Some(value)
@@ -1146,7 +1325,7 @@ fn generate_optional_field_decoder(
         }
       })"
 
-    proto_parser.String ->
+    parser.String ->
       "decode.optional_field(" <> num_str <> ", decode.string_field)
       |> decode.map(fn(opt) {
         case opt {
@@ -1155,7 +1334,7 @@ fn generate_optional_field_decoder(
         }
       })"
 
-    proto_parser.Bytes ->
+    parser.Bytes ->
       "decode.optional_field(" <> num_str <> ", decode.bytes_field)
       |> decode.map(fn(opt) {
         case opt {
@@ -1164,7 +1343,7 @@ fn generate_optional_field_decoder(
         }
       })"
 
-    proto_parser.MessageType(type_name) ->
+    parser.MessageType(type_name) ->
       "decode.optional_nested_message("
       <> num_str
       <> ", "
@@ -1177,7 +1356,7 @@ fn generate_optional_field_decoder(
         }
       })"
 
-    proto_parser.EnumType(enum_name) -> {
+    parser.EnumType(enum_name) -> {
       let decoder_name = "decode_" <> string.lowercase(enum_name) <> "_value"
       "decode.optional_field(" <> num_str <> ", fn(f) {
         use value <- result.try(decode.varint_field(f))

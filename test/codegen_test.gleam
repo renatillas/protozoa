@@ -1,29 +1,59 @@
 import glance
+import gleam/list
 import gleam/string
 import gleeunit
 import protozoa/codegen
-import protozoa/proto_parser as parser
+import protozoa/parser
+import protozoa/type_registry
 import simplifile
 
 pub fn main() -> Nil {
   gleeunit.main()
 }
 
-// Helper to compile, test and save generated code
 fn compile_test_and_save(
   proto_content: String,
   test_name: String,
   test_fn: fn(String) -> Nil,
 ) -> Nil {
-  let parsed = parser.parse_simple(proto_content)
+  let parsed = parser.parse(proto_content)
   let generated = codegen.generate_simple(parsed)
-
-  // First verify it's valid Gleam code
-  let assert Ok(_) = glance.module(generated)
 
   // Save the generated code to a file
   let output_path = "test/generated_outputs/" <> test_name <> ".gleam"
   let _ = simplifile.write(output_path, generated)
+
+  // First verify it's valid Gleam code
+  let assert Ok(_) = glance.module(generated)
+
+  // Then run the specific test
+  test_fn(generated)
+}
+
+fn compile_test_and_save_with_imports(
+  proto_content: List(#(String, String)),
+  test_name: String,
+  test_fn: fn(List(#(String, String))) -> Nil,
+) -> Nil {
+  let parsed =
+    list.map(proto_content, fn(name_and_content) {
+      let #(name, content) = name_and_content
+      parser.Path("generated_outputs/" <> name, parser.parse(content))
+    })
+  let registry = type_registry.new()
+  let assert Ok(generated) =
+    codegen.generate_with_imports(
+      parsed,
+      registry,
+      "test/generated_outputs/" <> test_name,
+    )
+
+  list.map(generated, fn(path_and_content) {
+    let #(_, content) = path_and_content
+    // First verify it's valid Gleam code
+    let assert Ok(_) = glance.module(content)
+    Nil
+  })
 
   // Then run the specific test
   test_fn(generated)
@@ -191,11 +221,11 @@ message OneofTest {
     assert_contains(generated, "Flag(Bool)")
 
     // Check main type has Result field
-    assert_contains(generated, "data: Result(OneofTestData, Nil)")
+    assert_contains(generated, "data: option.Option(OneofTestData)")
 
     // Check oneof encoding
     assert_contains(generated, "case oneoftest.data {")
-    assert_contains(generated, "Ok(oneof_value) -> {")
+    assert_contains(generated, "Some(oneof_value) -> {")
     assert_contains(generated, "Text(value) -> encode.string_field(2, value)")
     assert_contains(generated, "Number(value) -> encode.int32_field(3, value)")
     assert_contains(generated, "Flag(value) -> encode.bool_field(4, value)")
@@ -408,5 +438,37 @@ message NestedMessage {
       "OptionB(value) -> encode.field(3, wire.LengthDelimited",
     )
     assert_contains(generated, "encode_nestedmessage(value)")
+  })
+}
+
+pub fn with_imports_test() {
+  let proto_content =
+    "
+syntax = \"proto3\";
+import \"other.proto\";
+message WithImport {
+  string name = 1;
+  OtherMessage other = 2;
+}
+"
+  let other_proto_content =
+    "
+syntax = \"proto3\";
+message OtherMessage {
+  int32 id = 1;
+}
+"
+  // First compile the imported proto to ensure OtherMessage is generated
+  compile_test_and_save(other_proto_content, "other", fn(_generated) {
+    Nil
+    // No specific checks needed here
+  })
+
+  // Now compile the main proto that imports it
+  compile_test_and_save(proto_content, "with_imports", fn(generated) {
+    // Check that the imported type is referenced correctly
+    assert_contains(generated, "other: other.OtherMessage")
+    assert_contains(generated, "encode_othermessage(other)")
+    assert_contains(generated, "othermessage_decoder()")
   })
 }

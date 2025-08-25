@@ -2,7 +2,7 @@ import argv
 import gleam/io
 import gleam/result
 import protozoa/codegen
-import protozoa/proto_parser
+import protozoa/parser
 import simplifile
 
 pub fn main() {
@@ -38,7 +38,7 @@ pub fn generate_from_proto(
     |> result.map_error(fn(_) { "Failed to read proto file: " <> input_path }),
   )
 
-  let proto_file = proto_parser.parse_simple(proto_content)
+  let proto_file = parser.parse(proto_content)
 
   let generated_code = codegen.generate_simple(proto_file)
 
