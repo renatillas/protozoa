@@ -42,6 +42,7 @@
 ////
 //// All decode functions return `Result(T, DecodeError)` with descriptive error messages
 //// for debugging binary format issues, missing required fields, or type mismatches.
+
 import gleam/bit_array
 import gleam/dict.{type Dict}
 import gleam/int
@@ -53,9 +54,9 @@ import protozoa/wire.{type WireType}
 // Core types
 
 /// Represents an error that occurred during decoding.
-/// Contains a descriptive error message.
+/// Contains what was expected, what was found, and the path to the error.
 pub type DecodeError {
-  DecodeError(message: String)
+  DecodeError(expected: String, found: String, path: List(String))
   FieldNotFound(field_number: Int)
 }
 
@@ -80,23 +81,28 @@ pub type ProtoValue {
 /// A decoder is a function that takes a dict of fields and produces a value.
 /// This type allows for composable, type-safe decoding of Protocol Buffer messages.
 /// Fields are stored in a Dict for O(1) lookup performance.
+/// Returns either the decoded value or a list of all errors encountered.
 pub opaque type Decoder(a) {
-  Decoder(fn(Dict(Int, List(Field))) -> Result(a, DecodeError))
+  Decoder(fn(Dict(Int, List(Field))) -> Result(a, List(DecodeError)))
 }
 
 /// Run a decoder on a BitArray containing Protocol Buffer data.
+/// Returns either the decoded value or a list of all errors encountered.
 /// 
 /// ## Examples
 /// 
 /// ```gleam
 /// let decoder = field(1, varint_field)
-/// decode(<<8, 42>>, decoder) // Decodes field 1 with value 42
+/// run(<<8, 42>>, decoder) // Decodes field 1 with value 42
 /// ```
-pub fn decode(
+pub fn run(
   data: BitArray,
   with decoder: Decoder(a),
-) -> Result(a, DecodeError) {
-  use fields <- result.try(decode_message(data))
+) -> Result(a, List(DecodeError)) {
+  use fields <- result.try(
+    decode_message(data)
+    |> result.map_error(fn(err) { [err] }),
+  )
   let field_dict = build_field_dict(fields)
   let Decoder(f) = decoder
   f(field_dict)
@@ -126,7 +132,7 @@ pub fn success(value: a) -> Decoder(a) {
 /// })
 /// ```
 pub fn from_field_dict(
-  f: fn(Dict(Int, List(Field))) -> Result(a, DecodeError),
+  f: fn(Dict(Int, List(Field))) -> Result(a, List(DecodeError)),
 ) -> Decoder(a) {
   Decoder(f)
 }
@@ -139,8 +145,8 @@ pub fn from_field_dict(
 /// ```gleam
 /// fail("Unsupported field type") // Always returns Error
 /// ```
-pub fn fail(error: String) -> Decoder(a) {
-  Decoder(fn(_fields) { Error(DecodeError(error)) })
+pub fn fail(expected: String, found: String, path: List(String)) -> Decoder(a) {
+  Decoder(fn(_fields) { Error([DecodeError(expected, found, path)]) })
 }
 
 /// Decode a required field with a specific decoder.
@@ -158,9 +164,11 @@ pub fn field(
 ) -> Decoder(a) {
   Decoder(fn(fields) {
     case dict.get(fields, number) {
-      Ok([field, ..]) -> decoder(field)
-      Ok([]) -> Error(FieldNotFound(number))
-      Error(_) -> Error(FieldNotFound(number))
+      Ok([field, ..]) ->
+        decoder(field)
+        |> result.map_error(fn(err) { [err] })
+      Ok([]) -> Error([FieldNotFound(number)])
+      Error(_) -> Error([FieldNotFound(number)])
     }
   })
 }
@@ -221,6 +229,7 @@ pub fn field_with_default(
 
 /// Decode all fields with a given number (for repeated fields).
 /// Returns a list of all decoded values for the field number.
+/// Collects all errors encountered during decoding.
 /// 
 /// ## Examples
 /// 
@@ -233,7 +242,29 @@ pub fn repeated_field(
 ) -> Decoder(List(a)) {
   Decoder(fn(fields) {
     case dict.get(fields, number) {
-      Ok(field_list) -> list.try_map(field_list, decoder)
+      Ok(field_list) -> {
+        let results = list.map(field_list, decoder)
+        let errors =
+          list.filter_map(results, fn(result) {
+            case result {
+              Error(err) -> Ok(err)
+              Ok(_) -> Error(Nil)
+            }
+          })
+        case errors {
+          [] -> {
+            let values =
+              list.filter_map(results, fn(result) {
+                case result {
+                  Ok(value) -> Ok(value)
+                  Error(_) -> Error(Nil)
+                }
+              })
+            Ok(values)
+          }
+          _ -> Error(errors)
+        }
+      }
       Error(_) -> Ok([])
     }
   })
@@ -249,10 +280,10 @@ pub fn varint_field(field: Field) -> Result(Int, DecodeError) {
     wire.Varint -> {
       case field.data {
         <<value:64>> -> Ok(value)
-        _ -> Error(DecodeError("Invalid varint data"))
+        _ -> Error(DecodeError("valid varint data", "invalid varint data", []))
       }
     }
-    _ -> Error(DecodeError("Field is not a varint"))
+    _ -> Error(DecodeError("varint wire type", "non-varint wire type", []))
   }
 }
 
@@ -262,9 +293,18 @@ pub fn string_field(field: Field) -> Result(String, DecodeError) {
   case field.wire_type {
     wire.LengthDelimited -> {
       bit_array.to_string(field.data)
-      |> result.map_error(fn(_) { DecodeError("Invalid UTF-8 string") })
+      |> result.map_error(fn(_) {
+        DecodeError("valid UTF-8 string", "invalid UTF-8 bytes", [])
+      })
     }
-    _ -> Error(DecodeError("Field is not length-delimited"))
+    _ ->
+      Error(
+        DecodeError(
+          "length-delimited wire type",
+          "non-length-delimited wire type",
+          [],
+        ),
+      )
   }
 }
 
@@ -273,7 +313,14 @@ pub fn string_field(field: Field) -> Result(String, DecodeError) {
 pub fn bytes_field(field: Field) -> Result(BitArray, DecodeError) {
   case field.wire_type {
     wire.LengthDelimited -> Ok(field.data)
-    _ -> Error(DecodeError("Field is not length-delimited"))
+    _ ->
+      Error(
+        DecodeError(
+          "length-delimited wire type",
+          "non-length-delimited wire type",
+          [],
+        ),
+      )
   }
 }
 
@@ -284,10 +331,13 @@ pub fn float_field(field: Field) -> Result(Float, DecodeError) {
     wire.Fixed32 -> {
       case field.data {
         <<value:32-float-little>> -> Ok(value)
-        _ -> Error(DecodeError("Invalid float data"))
+        _ ->
+          Error(
+            DecodeError("valid 32-bit float data", "invalid float data", []),
+          )
       }
     }
-    _ -> Error(DecodeError("Field is not a float"))
+    _ -> Error(DecodeError("fixed32 wire type", "non-fixed32 wire type", []))
   }
 }
 
@@ -298,10 +348,13 @@ pub fn double_field(field: Field) -> Result(Float, DecodeError) {
     wire.Fixed64 -> {
       case field.data {
         <<value:64-float-little>> -> Ok(value)
-        _ -> Error(DecodeError("Invalid double data"))
+        _ ->
+          Error(
+            DecodeError("valid 64-bit double data", "invalid double data", []),
+          )
       }
     }
-    _ -> Error(DecodeError("Field is not a double"))
+    _ -> Error(DecodeError("fixed64 wire type", "non-fixed64 wire type", []))
   }
 }
 
@@ -343,10 +396,13 @@ pub fn fixed32_int_field(field: Field) -> Result(Int, DecodeError) {
     wire.Fixed32 -> {
       case field.data {
         <<value:32-little>> -> Ok(value)
-        _ -> Error(DecodeError("Invalid fixed32 data"))
+        _ ->
+          Error(
+            DecodeError("valid 32-bit integer data", "invalid fixed32 data", []),
+          )
       }
     }
-    _ -> Error(DecodeError("Field is not a fixed32"))
+    _ -> Error(DecodeError("fixed32 wire type", "non-fixed32 wire type", []))
   }
 }
 
@@ -357,10 +413,13 @@ pub fn fixed64_int_field(field: Field) -> Result(Int, DecodeError) {
     wire.Fixed64 -> {
       case field.data {
         <<value:64-little>> -> Ok(value)
-        _ -> Error(DecodeError("Invalid fixed64 data"))
+        _ ->
+          Error(
+            DecodeError("valid 64-bit integer data", "invalid fixed64 data", []),
+          )
       }
     }
-    _ -> Error(DecodeError("Field is not a fixed64"))
+    _ -> Error(DecodeError("fixed64 wire type", "non-fixed64 wire type", []))
   }
 }
 
@@ -371,10 +430,17 @@ pub fn sfixed32_field(field: Field) -> Result(Int, DecodeError) {
     wire.Fixed32 -> {
       case field.data {
         <<value:32-signed-little>> -> Ok(value)
-        _ -> Error(DecodeError("Invalid sfixed32 data"))
+        _ ->
+          Error(
+            DecodeError(
+              "valid signed 32-bit integer data",
+              "invalid sfixed32 data",
+              [],
+            ),
+          )
       }
     }
-    _ -> Error(DecodeError("Field is not an sfixed32"))
+    _ -> Error(DecodeError("fixed32 wire type", "non-fixed32 wire type", []))
   }
 }
 
@@ -385,10 +451,17 @@ pub fn sfixed64_field(field: Field) -> Result(Int, DecodeError) {
     wire.Fixed64 -> {
       case field.data {
         <<value:64-signed-little>> -> Ok(value)
-        _ -> Error(DecodeError("Invalid sfixed64 data"))
+        _ ->
+          Error(
+            DecodeError(
+              "valid signed 64-bit integer data",
+              "invalid sfixed64 data",
+              [],
+            ),
+          )
       }
     }
-    _ -> Error(DecodeError("Field is not an sfixed64"))
+    _ -> Error(DecodeError("fixed64 wire type", "non-fixed64 wire type", []))
   }
 }
 
@@ -399,10 +472,18 @@ pub fn message_field(
   decoder: Decoder(a),
 ) -> Result(a, DecodeError) {
   use bytes <- result.try(bytes_field(field))
-  use inner_fields <- result.try(decode_message(bytes))
+  use inner_fields <- result.try(
+    decode_message(bytes)
+    |> result.map_error(fn(err) { err }),
+  )
   let field_dict = build_field_dict(inner_fields)
   let Decoder(f) = decoder
-  f(field_dict)
+  case f(field_dict) {
+    Ok(value) -> Ok(value)
+    Error([first_error, ..]) -> Error(first_error)
+    Error([]) ->
+      Error(DecodeError("valid message data", "empty error list", []))
+  }
 }
 
 // Convenience decoders combining field number and type
@@ -532,20 +613,25 @@ pub fn optional_nested_message(
 
 /// Build a decoder using Gleam's use syntax.
 /// This allows for composing multiple field decoders into a single decoder.
+/// Collects all errors from both decoder stages.
 /// 
 /// ## Examples
 /// 
 /// ```gleam
-/// use name <- decode.subrecord(decode.string(1))
-/// use age <- decode.subrecord(decode.int32(2))
+/// use name <- decode.then(decode.string(1))
+/// use age <- decode.then(decode.int32(2))
 /// decode.success(Person(name: name, age: age))
 /// ```
-pub fn subrecord(decoder: Decoder(a), next: fn(a) -> Decoder(b)) -> Decoder(b) {
+pub fn then(decoder: Decoder(a), next: fn(a) -> Decoder(b)) -> Decoder(b) {
   Decoder(fn(fields) {
     let Decoder(f) = decoder
-    use value <- result.try(f(fields))
-    let Decoder(g) = next(value)
-    g(fields)
+    case f(fields) {
+      Ok(value) -> {
+        let Decoder(g) = next(value)
+        g(fields)
+      }
+      Error(errors) -> Error(errors)
+    }
   })
 }
 
@@ -602,7 +688,9 @@ fn decode_field(data: BitArray) -> Result(#(Field, BitArray), DecodeError) {
   let field_number = wire.get_field_number(tag)
   use wire_type <- result.try(
     wire.get_wire_type(tag)
-    |> result.map_error(fn(_) { DecodeError("Invalid wire type") }),
+    |> result.map_error(fn(_) {
+      DecodeError("valid wire type", "invalid wire type", [])
+    }),
   )
 
   case wire_type {
@@ -623,7 +711,7 @@ fn decode_field(data: BitArray) -> Result(#(Field, BitArray), DecodeError) {
       use #(value, rest2) <- result.try(decode_fixed32_raw(rest1))
       Ok(#(Field(field_number, wire_type, value), rest2))
     }
-    _ -> Error(DecodeError("Unsupported wire type"))
+    _ -> Error(DecodeError("supported wire type", "unsupported wire type", []))
   }
 }
 
@@ -637,7 +725,7 @@ fn decode_varint_helper(
   shift: Int,
 ) -> Result(#(Int, BitArray), DecodeError) {
   case data {
-    <<>> -> Error(DecodeError("Unexpected end of data"))
+    <<>> -> Error(DecodeError("more varint data", "unexpected end of data", []))
     <<byte:int, rest:bits>> -> {
       let new_value =
         value
@@ -650,7 +738,7 @@ fn decode_varint_helper(
         _ -> decode_varint_helper(rest, new_value, shift + 7)
       }
     }
-    _ -> Error(DecodeError("Invalid varint data"))
+    _ -> Error(DecodeError("valid varint data", "invalid varint data", []))
   }
 }
 
@@ -659,7 +747,7 @@ fn decode_fixed32_raw(
 ) -> Result(#(BitArray, BitArray), DecodeError) {
   case data {
     <<value:32-bits, rest:bits>> -> Ok(#(value, rest))
-    _ -> Error(DecodeError("Not enough data for fixed32"))
+    _ -> Error(DecodeError("4 bytes for fixed32", "insufficient data", []))
   }
 }
 
@@ -668,7 +756,7 @@ fn decode_fixed64_raw(
 ) -> Result(#(BitArray, BitArray), DecodeError) {
   case data {
     <<value:64-bits, rest:bits>> -> Ok(#(value, rest))
-    _ -> Error(DecodeError("Not enough data for fixed64"))
+    _ -> Error(DecodeError("8 bytes for fixed64", "insufficient data", []))
   }
 }
 
@@ -681,10 +769,24 @@ fn decode_length_delimited_raw(
       let bytes_to_take = length * 8
       case rest {
         <<value:size(bytes_to_take)-bits, rest:bits>> -> Ok(#(value, rest))
-        _ -> Error(DecodeError("Not enough data for length-delimited field"))
+        _ ->
+          Error(
+            DecodeError(
+              "sufficient bytes for length-delimited field",
+              "insufficient data",
+              [],
+            ),
+          )
       }
     }
-    False -> Error(DecodeError("Not enough data for length-delimited field"))
+    False ->
+      Error(
+        DecodeError(
+          "sufficient bytes for length-delimited field",
+          "insufficient data",
+          [],
+        ),
+      )
   }
 }
 

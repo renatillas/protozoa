@@ -164,7 +164,7 @@ pub fn encode_user(user: User) -> BitArray {
   // ... generated encoder
 }
 
-pub fn decode_user(data: BitArray) -> Result(User, decode.DecodeError) {
+pub fn decode_user(data: BitArray) -> Result(User, List(decode.DecodeError)) {
   // ... generated decoder  
 }
 ```

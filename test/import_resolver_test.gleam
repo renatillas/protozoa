@@ -4,10 +4,10 @@ import gleam/option.{Some}
 import gleam/string
 import gleeunit
 import protozoa/codegen
-import protozoa/internals/import_resolver
+import protozoa/internal/import_resolver
+import protozoa/internal/type_registry
+import protozoa/internal/well_known_types
 import protozoa/parser
-import protozoa/internals/type_registry
-import protozoa/internals/well_known_types
 import simplifile
 
 pub fn main() {
@@ -245,7 +245,7 @@ message Test {
   string id = 1;
 }"
 
-  let parsed = parser.parse(proto_with_comments)
+  let assert Ok(parsed) = parser.parse(proto_with_comments)
 
   assert [
       parser.Import(path: "base.proto", public: False, weak: False),
@@ -367,7 +367,7 @@ message Other {
   Outer.Inner nested = 1;
 }"
 
-  let parsed = parser.parse(proto)
+  let assert Ok(parsed) = parser.parse(proto)
   let registry = type_registry.new()
 
   let assert Ok(updated_registry) =
@@ -404,8 +404,8 @@ message Duplicate {
   int32 value = 1;
 }"
 
-  let parsed1 = parser.parse(proto1)
-  let parsed2 = parser.parse(proto2)
+  let assert Ok(parsed1) = parser.parse(proto1)
+  let assert Ok(parsed2) = parser.parse(proto2)
 
   let registry = type_registry.new()
 
@@ -489,7 +489,7 @@ message UpdateRequest {
   Nil
 }
 
-pub fn test_codegen_with_imports() {
+pub fn codegen_with_imports_test() {
   let base_proto =
     "syntax = \"proto3\";
 package base;
@@ -533,6 +533,7 @@ message AppMessage {
     })
 
   // Test that code generation works with imports
+  let _ = simplifile.create_directory_all("./test_output")
   let assert Ok(generated_files) =
     codegen.generate_with_imports(paths, registry, "./test_output")
 
@@ -543,5 +544,6 @@ message AppMessage {
   let _ = simplifile.delete("app.proto")
   let _ = simplifile.delete("./test_output/base.gleam")
   let _ = simplifile.delete("./test_output/app.gleam")
+  let _ = simplifile.clear_directory("./test_output")
   Nil
 }

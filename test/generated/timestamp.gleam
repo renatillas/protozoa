@@ -9,10 +9,7 @@ import protozoa/decode
 import protozoa/encode
 
 pub type Timestamp {
-  Timestamp(
-    seconds: Int,
-    nanos: Int,
-  )
+  Timestamp(seconds: Int, nanos: Int)
 }
 
 pub fn encode_timestamp(timestamp: Timestamp) -> BitArray {
@@ -28,6 +25,8 @@ pub fn timestamp_decoder() -> decode.Decoder(Timestamp) {
   decode.success(Timestamp(seconds: seconds, nanos: nanos))
 }
 
-pub fn decode_timestamp(data: BitArray) -> Result(Timestamp, List(decode.DecodeError)) {
+pub fn decode_timestamp(
+  data: BitArray,
+) -> Result(Timestamp, List(decode.DecodeError)) {
   decode.run(data, timestamp_decoder())
 }

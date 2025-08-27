@@ -11,19 +11,15 @@ import protozoa/decode
 import protozoa/encode
 import protozoa/wire
 
-
-
 pub type OuterMessageNestedMessageDeeplyNestedMessage {
-  OuterMessageNestedMessageDeeplyNestedMessage(
-  deeply_nested_flag: Bool
-  )
+  OuterMessageNestedMessageDeeplyNestedMessage(deeply_nested_flag: Bool)
 }
 
 pub type OuterMessageNestedMessage {
   OuterMessageNestedMessage(
-  nested_field: String,
-  nested_number: Int,
-  deeply_nested: OuterMessageNestedMessageDeeplyNestedMessage
+    nested_field: String,
+    nested_number: Int,
+    deeply_nested: OuterMessageNestedMessageDeeplyNestedMessage,
   )
 }
 
@@ -35,90 +31,174 @@ pub type OuterMessageNestedEnum {
 
 pub type OuterMessage {
   OuterMessage(
-  outer_field: String,
-  nested: OuterMessageNestedMessage,
-  status: OuterMessageNestedEnum
+    outer_field: String,
+    nested: OuterMessageNestedMessage,
+    status: OuterMessageNestedEnum,
   )
 }
 
 pub type MessageWithNested {
   MessageWithNested(
-  nested_ref: OuterMessageNestedMessage,
-  enum_ref: OuterMessageNestedEnum,
-  deep_ref: OuterMessageNestedMessageDeeplyNestedMessage
+    nested_ref: OuterMessageNestedMessage,
+    enum_ref: OuterMessageNestedEnum,
+    deep_ref: OuterMessageNestedMessageDeeplyNestedMessage,
   )
 }
 
 pub fn encode_outermessage(outermessage: OuterMessage) -> BitArray {
   encode.message([
     encode.string_field(1, outermessage.outer_field),
-    encode.field(2, wire.LengthDelimited, encode.length_delimited(encode_outermessagenestedmessage(outermessage.nested))),
-    encode.int32_field(3, encode_outermessagenestedenum_value(outermessage.status))
+    encode.field(
+      2,
+      wire.LengthDelimited,
+      encode.length_delimited(encode_outermessagenestedmessage(
+        outermessage.nested,
+      )),
+    ),
+    encode.int32_field(
+      3,
+      encode_outermessagenestedenum_value(outermessage.status),
+    ),
   ])
 }
 
-pub fn encode_outermessagenestedmessage(outermessagenestedmessage: OuterMessageNestedMessage) -> BitArray {
+pub fn encode_outermessagenestedmessage(
+  outermessagenestedmessage: OuterMessageNestedMessage,
+) -> BitArray {
   encode.message([
     encode.string_field(1, outermessagenestedmessage.nested_field),
     encode.int32_field(2, outermessagenestedmessage.nested_number),
-    encode.field(3, wire.LengthDelimited, encode.length_delimited(encode_outermessagenestedmessagedeeplynestedmessage(outermessagenestedmessage.deeply_nested)))
+    encode.field(
+      3,
+      wire.LengthDelimited,
+      encode.length_delimited(
+        encode_outermessagenestedmessagedeeplynestedmessage(
+          outermessagenestedmessage.deeply_nested,
+        ),
+      ),
+    ),
   ])
 }
 
-pub fn encode_outermessagenestedmessagedeeplynestedmessage(outermessagenestedmessagedeeplynestedmessage: OuterMessageNestedMessageDeeplyNestedMessage) -> BitArray {
+pub fn encode_outermessagenestedmessagedeeplynestedmessage(
+  outermessagenestedmessagedeeplynestedmessage: OuterMessageNestedMessageDeeplyNestedMessage,
+) -> BitArray {
   encode.message([
-    encode.bool_field(1, outermessagenestedmessagedeeplynestedmessage.deeply_nested_flag)
+    encode.bool_field(
+      1,
+      outermessagenestedmessagedeeplynestedmessage.deeply_nested_flag,
+    ),
   ])
 }
 
-pub fn encode_messagewithnested(messagewithnested: MessageWithNested) -> BitArray {
+pub fn encode_messagewithnested(
+  messagewithnested: MessageWithNested,
+) -> BitArray {
   encode.message([
-    encode.field(1, wire.LengthDelimited, encode.length_delimited(encode_outermessagenestedmessage(messagewithnested.nested_ref))),
-    encode.int32_field(2, encode_outermessagenestedenum_value(messagewithnested.enum_ref)),
-    encode.field(3, wire.LengthDelimited, encode.length_delimited(encode_outermessagenestedmessagedeeplynestedmessage(messagewithnested.deep_ref)))
+    encode.field(
+      1,
+      wire.LengthDelimited,
+      encode.length_delimited(encode_outermessagenestedmessage(
+        messagewithnested.nested_ref,
+      )),
+    ),
+    encode.int32_field(
+      2,
+      encode_outermessagenestedenum_value(messagewithnested.enum_ref),
+    ),
+    encode.field(
+      3,
+      wire.LengthDelimited,
+      encode.length_delimited(
+        encode_outermessagenestedmessagedeeplynestedmessage(
+          messagewithnested.deep_ref,
+        ),
+      ),
+    ),
   ])
 }
 
 pub fn outermessage_decoder() -> decode.Decoder(OuterMessage) {
-  use outer_field <- decode.subrecord(decode.string_with_default(1, ""))
-  use nested <- decode.subrecord(decode.nested_message(2, outermessagenestedmessage_decoder()))
-  use status <- decode.subrecord(decode_outermessagenestedenum_field(3))
-  decode.success(OuterMessage(outer_field: outer_field, nested: nested, status: status))
+  use outer_field <- decode.then(decode.string_with_default(1, ""))
+  use nested <- decode.then(decode.nested_message(
+    2,
+    outermessagenestedmessage_decoder(),
+  ))
+  use status <- decode.then(decode_outermessagenestedenum_field(3))
+  decode.success(OuterMessage(
+    outer_field: outer_field,
+    nested: nested,
+    status: status,
+  ))
 }
 
-pub fn decode_outermessage(data: BitArray) -> Result(OuterMessage, decode.DecodeError) {
-  decode.decode(data, outermessage_decoder())
+pub fn decode_outermessage(
+  data: BitArray,
+) -> Result(OuterMessage, List(decode.DecodeError)) {
+  decode.run(data, outermessage_decoder())
 }
 
-pub fn outermessagenestedmessage_decoder() -> decode.Decoder(OuterMessageNestedMessage) {
-  use nested_field <- decode.subrecord(decode.string_with_default(1, ""))
-  use nested_number <- decode.subrecord(decode.int32_with_default(2, 0))
-  use deeply_nested <- decode.subrecord(decode.nested_message(3, outermessagenestedmessagedeeplynestedmessage_decoder()))
-  decode.success(OuterMessageNestedMessage(nested_field: nested_field, nested_number: nested_number, deeply_nested: deeply_nested))
+pub fn outermessagenestedmessage_decoder() -> decode.Decoder(
+  OuterMessageNestedMessage,
+) {
+  use nested_field <- decode.then(decode.string_with_default(1, ""))
+  use nested_number <- decode.then(decode.int32_with_default(2, 0))
+  use deeply_nested <- decode.then(decode.nested_message(
+    3,
+    outermessagenestedmessagedeeplynestedmessage_decoder(),
+  ))
+  decode.success(OuterMessageNestedMessage(
+    nested_field: nested_field,
+    nested_number: nested_number,
+    deeply_nested: deeply_nested,
+  ))
 }
 
-pub fn decode_outermessagenestedmessage(data: BitArray) -> Result(OuterMessageNestedMessage, decode.DecodeError) {
-  decode.decode(data, outermessagenestedmessage_decoder())
+pub fn decode_outermessagenestedmessage(
+  data: BitArray,
+) -> Result(OuterMessageNestedMessage, List(decode.DecodeError)) {
+  decode.run(data, outermessagenestedmessage_decoder())
 }
 
-pub fn outermessagenestedmessagedeeplynestedmessage_decoder() -> decode.Decoder(OuterMessageNestedMessageDeeplyNestedMessage) {
-  use deeply_nested_flag <- decode.subrecord(decode.bool_with_default(1, False))
-  decode.success(OuterMessageNestedMessageDeeplyNestedMessage(deeply_nested_flag: deeply_nested_flag))
+pub fn outermessagenestedmessagedeeplynestedmessage_decoder() -> decode.Decoder(
+  OuterMessageNestedMessageDeeplyNestedMessage,
+) {
+  use deeply_nested_flag <- decode.then(decode.bool_with_default(1, False))
+  decode.success(OuterMessageNestedMessageDeeplyNestedMessage(
+    deeply_nested_flag: deeply_nested_flag,
+  ))
 }
 
-pub fn decode_outermessagenestedmessagedeeplynestedmessage(data: BitArray) -> Result(OuterMessageNestedMessageDeeplyNestedMessage, decode.DecodeError) {
-  decode.decode(data, outermessagenestedmessagedeeplynestedmessage_decoder())
+pub fn decode_outermessagenestedmessagedeeplynestedmessage(
+  data: BitArray,
+) -> Result(
+  OuterMessageNestedMessageDeeplyNestedMessage,
+  List(decode.DecodeError),
+) {
+  decode.run(data, outermessagenestedmessagedeeplynestedmessage_decoder())
 }
 
 pub fn messagewithnested_decoder() -> decode.Decoder(MessageWithNested) {
-  use nested_ref <- decode.subrecord(decode.nested_message(1, outermessagenestedmessage_decoder()))
-  use enum_ref <- decode.subrecord(decode_outermessagenestedenum_field(2))
-  use deep_ref <- decode.subrecord(decode.nested_message(3, outermessagenestedmessagedeeplynestedmessage_decoder()))
-  decode.success(MessageWithNested(nested_ref: nested_ref, enum_ref: enum_ref, deep_ref: deep_ref))
+  use nested_ref <- decode.then(decode.nested_message(
+    1,
+    outermessagenestedmessage_decoder(),
+  ))
+  use enum_ref <- decode.then(decode_outermessagenestedenum_field(2))
+  use deep_ref <- decode.then(decode.nested_message(
+    3,
+    outermessagenestedmessagedeeplynestedmessage_decoder(),
+  ))
+  decode.success(MessageWithNested(
+    nested_ref: nested_ref,
+    enum_ref: enum_ref,
+    deep_ref: deep_ref,
+  ))
 }
 
-pub fn decode_messagewithnested(data: BitArray) -> Result(MessageWithNested, decode.DecodeError) {
-  decode.decode(data, messagewithnested_decoder())
+pub fn decode_messagewithnested(
+  data: BitArray,
+) -> Result(MessageWithNested, List(decode.DecodeError)) {
+  decode.run(data, messagewithnested_decoder())
 }
 
 pub fn encode_outermessagenestedenum_value(value: OuterMessageNestedEnum) -> Int {
@@ -129,7 +209,9 @@ pub fn encode_outermessagenestedenum_value(value: OuterMessageNestedEnum) -> Int
   }
 }
 
-pub fn decode_outermessagenestedenum_value(value: Int) -> Result(OuterMessageNestedEnum, String) {
+pub fn decode_outermessagenestedenum_value(
+  value: Int,
+) -> Result(OuterMessageNestedEnum, String) {
   case value {
     0 -> Ok(UNKNOWN)
     1 -> Ok(FIRST)
@@ -138,18 +220,26 @@ pub fn decode_outermessagenestedenum_value(value: Int) -> Result(OuterMessageNes
   }
 }
 
-pub fn decode_outermessagenestedenum_field(field_num: Int) -> decode.Decoder(OuterMessageNestedEnum) {
+pub fn decode_outermessagenestedenum_field(
+  field_num: Int,
+) -> decode.Decoder(OuterMessageNestedEnum) {
   decode.field(field_num, fn(f) {
     use value <- result.try(decode.varint_field(f))
     decode_outermessagenestedenum_value(value)
-    |> result.map_error(fn(e) { decode.DecodeError(e) })
+    |> result.map_error(fn(e) {
+      decode.DecodeError(expected: "valid enum value", found: e, path: [])
+    })
   })
 }
 
-pub fn decode_repeated_outermessagenestedenum(field_num: Int) -> decode.Decoder(List(OuterMessageNestedEnum)) {
+pub fn decode_repeated_outermessagenestedenum(
+  field_num: Int,
+) -> decode.Decoder(List(OuterMessageNestedEnum)) {
   decode.repeated_field(field_num, fn(f) {
     use value <- result.try(decode.varint_field(f))
     decode_outermessagenestedenum_value(value)
-    |> result.map_error(fn(e) { decode.DecodeError(e) })
+    |> result.map_error(fn(e) {
+      decode.DecodeError(expected: "valid enum value", found: e, path: [])
+    })
   })
 }

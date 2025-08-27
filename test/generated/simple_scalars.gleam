@@ -64,17 +64,17 @@ pub fn encode_statusmessage(statusmessage: StatusMessage) -> BitArray {
 }
 
 pub fn simplemessage_decoder() -> decode.Decoder(SimpleMessage) {
-  use double_field <- decode.subrecord(decode.double(1))
-  use float_field <- decode.subrecord(decode.float(2))
-  use int32_field <- decode.subrecord(decode.int32_with_default(3, 0))
-  use int64_field <- decode.subrecord(decode.int64_with_default(4, 0))
-  use uint32_field <- decode.subrecord(decode.uint32_with_default(5, 0))
-  use uint64_field <- decode.subrecord(decode.uint64_with_default(6, 0))
-  use sint32_field <- decode.subrecord(decode.sint32(7))
-  use sint64_field <- decode.subrecord(decode.sint64(8))
-  use bool_field <- decode.subrecord(decode.bool_with_default(9, False))
-  use string_field <- decode.subrecord(decode.string_with_default(10, ""))
-  use bytes_field <- decode.subrecord(decode.bytes(11))
+  use double_field <- decode.then(decode.double(1))
+  use float_field <- decode.then(decode.float(2))
+  use int32_field <- decode.then(decode.int32_with_default(3, 0))
+  use int64_field <- decode.then(decode.int64_with_default(4, 0))
+  use uint32_field <- decode.then(decode.uint32_with_default(5, 0))
+  use uint64_field <- decode.then(decode.uint64_with_default(6, 0))
+  use sint32_field <- decode.then(decode.sint32(7))
+  use sint64_field <- decode.then(decode.sint64(8))
+  use bool_field <- decode.then(decode.bool_with_default(9, False))
+  use string_field <- decode.then(decode.string_with_default(10, ""))
+  use bytes_field <- decode.then(decode.bytes(11))
   decode.success(SimpleMessage(
     double_field: double_field,
     float_field: float_field,
@@ -92,19 +92,19 @@ pub fn simplemessage_decoder() -> decode.Decoder(SimpleMessage) {
 
 pub fn decode_simplemessage(
   data: BitArray,
-) -> Result(SimpleMessage, decode.DecodeError) {
-  decode.decode(data, simplemessage_decoder())
+) -> Result(SimpleMessage, List(decode.DecodeError)) {
+  decode.run(data, simplemessage_decoder())
 }
 
 pub fn statusmessage_decoder() -> decode.Decoder(StatusMessage) {
-  use status <- decode.subrecord(decode_status_field(1))
+  use status <- decode.then(decode_status_field(1))
   decode.success(StatusMessage(status: status))
 }
 
 pub fn decode_statusmessage(
   data: BitArray,
-) -> Result(StatusMessage, decode.DecodeError) {
-  decode.decode(data, statusmessage_decoder())
+) -> Result(StatusMessage, List(decode.DecodeError)) {
+  decode.run(data, statusmessage_decoder())
 }
 
 pub fn encode_status_value(value: Status) -> Int {
@@ -128,7 +128,9 @@ pub fn decode_status_field(field_num: Int) -> decode.Decoder(Status) {
   decode.field(field_num, fn(f) {
     use value <- result.try(decode.varint_field(f))
     decode_status_value(value)
-    |> result.map_error(fn(e) { decode.DecodeError(e) })
+    |> result.map_error(fn(e) {
+      decode.DecodeError(expected: "valid enum value", found: e, path: [])
+    })
   })
 }
 
@@ -136,6 +138,8 @@ pub fn decode_repeated_status(field_num: Int) -> decode.Decoder(List(Status)) {
   decode.repeated_field(field_num, fn(f) {
     use value <- result.try(decode.varint_field(f))
     decode_status_value(value)
-    |> result.map_error(fn(e) { decode.DecodeError(e) })
+    |> result.map_error(fn(e) {
+      decode.DecodeError(expected: "valid enum value", found: e, path: [])
+    })
   })
 }

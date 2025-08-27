@@ -9,10 +9,7 @@ import protozoa/decode
 import protozoa/encode
 
 pub type Duration {
-  Duration(
-    seconds: Int,
-    nanos: Int,
-  )
+  Duration(seconds: Int, nanos: Int)
 }
 
 pub fn encode_duration(duration: Duration) -> BitArray {
@@ -28,6 +25,8 @@ pub fn duration_decoder() -> decode.Decoder(Duration) {
   decode.success(Duration(seconds: seconds, nanos: nanos))
 }
 
-pub fn decode_duration(data: BitArray) -> Result(Duration, List(decode.DecodeError)) {
+pub fn decode_duration(
+  data: BitArray,
+) -> Result(Duration, List(decode.DecodeError)) {
   decode.run(data, duration_decoder())
 }

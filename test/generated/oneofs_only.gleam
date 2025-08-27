@@ -38,15 +38,15 @@ pub fn encode_submessage(submessage: SubMessage) -> BitArray {
 }
 
 pub fn simpleoneof_decoder() -> decode.Decoder(SimpleOneof) {
-  use common_field <- decode.subrecord(decode.string_with_default(4, ""))
-  use value <- decode.subrecord(oneof_value_decoder())
+  use common_field <- decode.then(decode.string_with_default(4, ""))
+  use value <- decode.then(oneof_value_decoder())
   decode.success(SimpleOneof(common_field: common_field, value: value))
 }
 
 pub fn decode_simpleoneof(
   data: BitArray,
-) -> Result(SimpleOneof, decode.DecodeError) {
-  decode.decode(data, simpleoneof_decoder())
+) -> Result(SimpleOneof, List(decode.DecodeError)) {
+  decode.run(data, simpleoneof_decoder())
 }
 
 fn oneof_value_decoder() -> decode.Decoder(option.Option(SimpleOneofValue)) {
@@ -128,12 +128,12 @@ fn oneof_value_decoder() -> decode.Decoder(option.Option(SimpleOneofValue)) {
 }
 
 pub fn submessage_decoder() -> decode.Decoder(SubMessage) {
-  use content <- decode.subrecord(decode.string_with_default(1, ""))
+  use content <- decode.then(decode.string_with_default(1, ""))
   decode.success(SubMessage(content: content))
 }
 
 pub fn decode_submessage(
   data: BitArray,
-) -> Result(SubMessage, decode.DecodeError) {
-  decode.decode(data, submessage_decoder())
+) -> Result(SubMessage, List(decode.DecodeError)) {
+  decode.run(data, submessage_decoder())
 }

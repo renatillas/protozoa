@@ -14,7 +14,7 @@ fn compile_test_and_save(
   test_name: String,
   test_fn: fn(String) -> Nil,
 ) -> Nil {
-  let parsed = parser.parse(proto_content)
+  let assert Ok(parsed) = parser.parse(proto_content)
   let generated = codegen.generate_simple_for_testing(parsed)
 
   // Save the generated code to a file
@@ -27,7 +27,6 @@ fn compile_test_and_save(
   // Then run the specific test
   test_fn(generated)
 }
-
 
 // Helper function to assert string contains substring
 fn assert_contains(haystack: String, needle: String) -> Nil {
@@ -438,7 +437,7 @@ message OtherMessage {
   compile_test_and_save(proto_content, "with_imports", fn(generated) {
     // Check that the imported type is referenced correctly
     assert_contains(generated, "other: other.OtherMessage")
-    assert_contains(generated, "encode_othermessage(other)")
+    assert_contains(generated, "encode_othermessage(withimport.other)")
     assert_contains(generated, "othermessage_decoder()")
   })
 }

@@ -1,6 +1,10 @@
 import generated/simple_scalars
 import gleam/string
-import gleeunit/should
+import gleeunit
+
+pub fn main() {
+  gleeunit.main()
+}
 
 pub fn simple_message_creation_test() {
   let msg: simple_scalars.SimpleMessage =
@@ -18,9 +22,9 @@ pub fn simple_message_creation_test() {
       bytes_field: <<"binary data">>,
     )
 
-  msg.double_field |> should.equal(3.14159)
-  msg.string_field |> should.equal("Hello, World!")
-  msg.bool_field |> should.equal(True)
+  assert msg.double_field == 3.14159
+  assert msg.string_field == "Hello, World!"
+  assert msg.bool_field == True
 }
 
 pub fn simple_encode_decode_roundtrip_test() {
@@ -45,10 +49,10 @@ pub fn simple_encode_decode_roundtrip_test() {
   case decoded {
     Ok(msg) -> {
       let typed_msg: simple_scalars.SimpleMessage = msg
-      typed_msg.double_field |> should.equal(1.5)
-      typed_msg.string_field |> should.equal("test")
-      typed_msg.bool_field |> should.equal(False)
-      typed_msg.int32_field |> should.equal(100)
+      assert typed_msg.double_field == 1.5
+      assert typed_msg.string_field == "test"
+      assert typed_msg.bool_field == False
+      assert typed_msg.int32_field == 100
     }
     Error(err) -> panic as { "Decode failed: " <> string.inspect(err) }
   }
@@ -57,7 +61,7 @@ pub fn simple_encode_decode_roundtrip_test() {
 pub fn status_enum_test() {
   let msg: simple_scalars.StatusMessage =
     simple_scalars.StatusMessage(status: simple_scalars.ACTIVE)
-  msg.status |> should.equal(simple_scalars.ACTIVE)
+  assert msg.status == simple_scalars.ACTIVE
 
   let encoded = simple_scalars.encode_statusmessage(msg)
   let decoded = simple_scalars.decode_statusmessage(encoded)
@@ -65,7 +69,7 @@ pub fn status_enum_test() {
   case decoded {
     Ok(decoded_msg) -> {
       let typed_msg: simple_scalars.StatusMessage = decoded_msg
-      typed_msg.status |> should.equal(simple_scalars.ACTIVE)
+      assert typed_msg.status == simple_scalars.ACTIVE
     }
     Error(err) -> panic as { "Decode failed: " <> string.inspect(err) }
   }

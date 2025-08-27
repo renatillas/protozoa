@@ -6,7 +6,8 @@
 import gleam/int
 import gleam/list
 import gleam/string
-import protozoa/internals/type_registry.{type TypeRegistry}
+import protozoa/internal/codegen/types
+import protozoa/internal/type_registry.{type TypeRegistry}
 import protozoa/parser.{type Field, type Message, type ProtoType}
 
 /// Generate all encoders for a list of messages
@@ -32,7 +33,7 @@ pub fn generate_message_encoder_with_registry(
 ) -> String {
   let function_name = "encode_" <> string.lowercase(message.name)
   let is_empty = list.is_empty(message.fields) && list.is_empty(message.oneofs)
-  
+
   let param_name = case is_empty {
     True -> "_" <> string.lowercase(message.name)
     False -> string.lowercase(message.name)
@@ -47,7 +48,7 @@ pub fn generate_message_encoder_with_registry(
         _ -> False
       }
     })
-  
+
   let #(map_fields, repeated_fields) =
     list.partition(repeated_and_map_fields, fn(field) {
       case field.field_type {
@@ -57,22 +58,39 @@ pub fn generate_message_encoder_with_registry(
     })
 
   // Generate different types of encoders
-  let regular_encoders = generate_regular_field_encoders(regular_fields, message, param_name, registry, file_path)
-  let oneof_encoders = generate_oneof_encoders(message.oneofs, message, param_name)
+  let regular_encoders =
+    generate_regular_field_encoders(
+      regular_fields,
+      message,
+      param_name,
+      registry,
+      file_path,
+    )
+  let oneof_encoders =
+    generate_oneof_encoders(message.oneofs, message, param_name)
   let repeated_code = generate_repeated_fields_code(repeated_fields, param_name)
   let map_code = generate_map_fields_code(map_fields, param_name)
 
   // Build the function body
-  let body = build_encoder_function_body(
-    repeated_fields,
-    map_fields,
-    regular_encoders,
-    oneof_encoders,
-    repeated_code,
-    map_code,
-  )
+  let body =
+    build_encoder_function_body(
+      repeated_fields,
+      map_fields,
+      regular_encoders,
+      oneof_encoders,
+      repeated_code,
+      map_code,
+    )
 
-  "pub fn " <> function_name <> "(" <> param_name <> ": " <> message.name <> ") -> BitArray {\n" <> body <> "\n}"
+  "pub fn "
+  <> function_name
+  <> "("
+  <> param_name
+  <> ": "
+  <> message.name
+  <> ") -> BitArray {\n"
+  <> body
+  <> "\n}"
 }
 
 /// Generate enum helper encoders
@@ -81,7 +99,7 @@ pub fn generate_enum_helpers_with_nested(
   messages: List(Message),
 ) -> String {
   let all_enums = collect_all_enums_flattened(top_level_enums, messages)
-  
+
   all_enums
   |> list.map(generate_enum_helper)
   |> string.join("\n\n")
@@ -98,8 +116,14 @@ fn generate_regular_field_encoders(
 ) -> List(String) {
   fields
   |> list.map(fn(field) {
-    let qualified_field_type = qualify_nested_field_type(field.field_type, message.name, message)
-    let resolved_field_type = resolve_field_type_with_registry(qualified_field_type, registry, file_path)
+    let qualified_field_type =
+      qualify_nested_field_type(field.field_type, message.name, message)
+    let resolved_field_type =
+      resolve_field_type_with_registry(
+        qualified_field_type,
+        registry,
+        file_path,
+      )
     let qualified_field = parser.Field(..field, field_type: resolved_field_type)
     generate_field_encoder(qualified_field, param_name)
   })
@@ -116,7 +140,10 @@ fn generate_oneof_encoders(
   })
 }
 
-fn generate_repeated_fields_code(fields: List(Field), param_name: String) -> String {
+fn generate_repeated_fields_code(
+  fields: List(Field),
+  param_name: String,
+) -> String {
   case fields {
     [] -> ""
     _ -> {
@@ -146,11 +173,11 @@ fn build_encoder_function_body(
   repeated_code: String,
   map_code: String,
 ) -> String {
-  let repeated_field_vars = 
+  let repeated_field_vars =
     repeated_fields
     |> list.map(fn(field) { string.lowercase(field.name) <> "_fields" })
-  
-  let map_field_vars = 
+
+  let map_field_vars =
     map_fields
     |> list.map(fn(field) { string.lowercase(field.name) <> "_fields" })
 
@@ -159,7 +186,10 @@ fn build_encoder_function_body(
 
   case all_vars, all_regular, repeated_code, map_code {
     [], [], "", "" -> "  encode.message([])"
-    [], encoders, "", "" -> "  encode.message([\n    " <> string.join(encoders, ",\n    ") <> ",\n  ])"
+    [], encoders, "", "" ->
+      "  encode.message([\n    "
+      <> string.join(encoders, ",\n    ")
+      <> ",\n  ])"
     vars, [], code1, code2 -> {
       let code = case code1, code2 {
         "", c2 -> "  " <> c2
@@ -174,13 +204,14 @@ fn build_encoder_function_body(
         c1, "" -> "  " <> c1
         c1, c2 -> "  " <> c1 <> "\n  " <> c2
       }
-      let individual_encoders = list.map(encoders, fn(enc) { "[" <> enc <> "]" })
-      let concat_expr = build_list_flattening(list.append(vars, individual_encoders))
+      let individual_encoders =
+        list.map(encoders, fn(enc) { "[" <> enc <> "]" })
+      let concat_expr =
+        build_list_flattening(list.append(vars, individual_encoders))
       code <> "\n  encode.message(" <> concat_expr <> ")"
     }
   }
 }
-
 
 fn build_list_flattening(vars: List(String)) -> String {
   case vars {
@@ -191,43 +222,85 @@ fn build_list_flattening(vars: List(String)) -> String {
 }
 
 fn generate_field_encoder(field: Field, param_name: String) -> String {
-  let field_access = param_name <> "." <> field.name
+  let escaped_field_name = types.escape_keyword(field.name)
+  let field_access = param_name <> "." <> escaped_field_name
   let field_num = int.to_string(field.number)
 
   case field.field_type {
-    parser.Optional(inner) -> generate_optional_field_encoder_typed(inner, field_access, field_num)
+    parser.Optional(inner) ->
+      generate_optional_field_encoder_typed(inner, field_access, field_num)
     parser.Repeated(_) -> "// Repeated fields handled separately"
-    _ -> generate_required_field_encoder(field.field_type, field_access, field_num)
+    _ ->
+      generate_required_field_encoder(field.field_type, field_access, field_num)
   }
 }
 
-fn generate_required_field_encoder(proto_type: ProtoType, access: String, field_num: String) -> String {
+fn generate_required_field_encoder(
+  proto_type: ProtoType,
+  access: String,
+  field_num: String,
+) -> String {
   case proto_type {
-    parser.String -> "encode.string_field(" <> field_num <> ", " <> access <> ")"
+    parser.String ->
+      "encode.string_field(" <> field_num <> ", " <> access <> ")"
     parser.Int32 -> "encode.int32_field(" <> field_num <> ", " <> access <> ")"
     parser.Int64 -> "encode.int64_field(" <> field_num <> ", " <> access <> ")"
-    parser.UInt32 -> "encode.uint32_field(" <> field_num <> ", " <> access <> ")"
-    parser.UInt64 -> "encode.uint64_field(" <> field_num <> ", " <> access <> ")"
-    parser.SInt32 -> "encode.sint32_field(" <> field_num <> ", " <> access <> ")"
-    parser.SInt64 -> "encode.sint64_field(" <> field_num <> ", " <> access <> ")"
-    parser.Fixed32 -> "encode.fixed32_field(" <> field_num <> ", " <> access <> ")"
-    parser.Fixed64 -> "encode.fixed64_field(" <> field_num <> ", " <> access <> ")"
-    parser.SFixed32 -> "encode.sfixed32_field(" <> field_num <> ", " <> access <> ")"
-    parser.SFixed64 -> "encode.sfixed64_field(" <> field_num <> ", " <> access <> ")"
+    parser.UInt32 ->
+      "encode.uint32_field(" <> field_num <> ", " <> access <> ")"
+    parser.UInt64 ->
+      "encode.uint64_field(" <> field_num <> ", " <> access <> ")"
+    parser.SInt32 ->
+      "encode.sint32_field(" <> field_num <> ", " <> access <> ")"
+    parser.SInt64 ->
+      "encode.sint64_field(" <> field_num <> ", " <> access <> ")"
+    parser.Fixed32 ->
+      "encode.fixed32_field(" <> field_num <> ", " <> access <> ")"
+    parser.Fixed64 ->
+      "encode.fixed64_field(" <> field_num <> ", " <> access <> ")"
+    parser.SFixed32 ->
+      "encode.sfixed32_field(" <> field_num <> ", " <> access <> ")"
+    parser.SFixed64 ->
+      "encode.sfixed64_field(" <> field_num <> ", " <> access <> ")"
     parser.Bool -> "encode.bool_field(" <> field_num <> ", " <> access <> ")"
-    parser.Bytes -> "encode.field(" <> field_num <> ", wire.LengthDelimited, encode.length_delimited(" <> access <> "))"
+    parser.Bytes ->
+      "encode.field("
+      <> field_num
+      <> ", wire.LengthDelimited, encode.length_delimited("
+      <> access
+      <> "))"
     parser.Float -> "encode.float_field(" <> field_num <> ", " <> access <> ")"
-    parser.Double -> "encode.double_field(" <> field_num <> ", " <> access <> ")"
-    parser.MessageType(_) -> "encode.message_field(" <> field_num <> ", encode_" <> string.lowercase(flatten_type_name(get_type_name(proto_type))) <> "(" <> access <> "))"
-    parser.EnumType(_) -> "encode.int32_field(" <> field_num <> ", encode_" <> string.lowercase(flatten_type_name(get_type_name(proto_type))) <> "_value(" <> access <> "))"
+    parser.Double ->
+      "encode.double_field(" <> field_num <> ", " <> access <> ")"
+    parser.MessageType(_) ->
+      "encode.field("
+      <> field_num
+      <> ", wire.LengthDelimited, encode_"
+      <> string.lowercase(flatten_type_name(get_type_name(proto_type)))
+      <> "("
+      <> access
+      <> "))"
+    parser.EnumType(_) ->
+      "encode.int32_field("
+      <> field_num
+      <> ", encode_"
+      <> string.lowercase(flatten_type_name(get_type_name(proto_type)))
+      <> "_value("
+      <> access
+      <> "))"
     _ -> "// Unsupported type: " <> string.inspect(proto_type)
   }
 }
 
-fn generate_optional_field_encoder_typed(inner_type: ProtoType, access: String, field_num: String) -> String {
-  "case " <> access <> " {\n      option.Some(val) -> " <> 
-  generate_required_field_encoder(inner_type, "val", field_num) <> 
-  "\n      option.None -> encode.empty_field()\n    }"
+fn generate_optional_field_encoder_typed(
+  inner_type: ProtoType,
+  access: String,
+  field_num: String,
+) -> String {
+  "case "
+  <> access
+  <> " {\n      Some(value) -> "
+  <> generate_required_field_encoder(inner_type, "value", field_num)
+  <> "\n      None -> <<>>\n    }"
 }
 
 fn generate_oneof_encoder(
@@ -236,10 +309,12 @@ fn generate_oneof_encoder(
   param_name: String,
   _parent_message: Message,
 ) -> String {
-  let oneof_access = param_name <> "." <> oneof.name
-  let _type_name = capitalize_first(message_name) <> capitalize_first(oneof.name)
-  
-  let cases = 
+  let escaped_oneof_name = types.escape_keyword(oneof.name)
+  let oneof_access = param_name <> "." <> escaped_oneof_name
+  let _type_name =
+    capitalize_first(message_name) <> capitalize_first(oneof.name)
+
+  let cases =
     oneof.fields
     |> list.map(fn(field) {
       let base_variant_name = capitalize_first(field.name)
@@ -250,57 +325,128 @@ fn generate_oneof_encoder(
         "Empty", "google.protobuf.Empty" -> "EmptyData"
         name, _ -> name
       }
-      let encoder = generate_required_field_encoder(field.field_type, "val", field_num)
-      "      " <> variant_name <> "(val) -> " <> encoder
+      let encoder =
+        generate_required_field_encoder(field.field_type, "value", field_num)
+      "      " <> variant_name <> "(value) -> " <> encoder
     })
     |> string.join("\n")
 
-  "case " <> oneof_access <> " {\n      option.Some(oneof_val) -> {\n        case oneof_val {\n" <> 
-  cases <> "\n        }\n      }\n      option.None -> <<>>\n    }"
+  "case "
+  <> oneof_access
+  <> " {\n      Some(oneof_value) -> {\n        case oneof_value {\n"
+  <> cases
+  <> "\n        }\n      }\n      None -> <<>>\n    }"
 }
 
 fn generate_repeated_field_code(field: Field, param_name: String) -> String {
-  let field_name = string.lowercase(field.name)
+  let escaped_field_name = types.escape_keyword(field.name)
+  let field_name = string.lowercase(escaped_field_name)
   let var_name = field_name <> "_fields"
-  let field_access = param_name <> "." <> field.name
+  let field_access = param_name <> "." <> escaped_field_name
   let field_num = int.to_string(field.number)
 
   case field.field_type {
     parser.Repeated(inner_type) -> {
       let encoder = generate_repeated_item_encoder(inner_type, field_num)
-      "let " <> var_name <> " = list.map(" <> field_access <> ", fn(v) { " <> encoder <> " })"
+      "let "
+      <> var_name
+      <> " = list.map("
+      <> field_access
+      <> ", fn(v) { "
+      <> encoder
+      <> " })"
     }
     _ -> "// Not a repeated field"
   }
 }
 
-fn generate_repeated_item_encoder(proto_type: ProtoType, field_num: String) -> String {
+fn generate_repeated_item_encoder(
+  proto_type: ProtoType,
+  field_num: String,
+) -> String {
   case proto_type {
     parser.String -> "encode.string_field(" <> field_num <> ", v)"
     parser.Int32 -> "encode.int32_field(" <> field_num <> ", v)"
     parser.Bool -> "encode.bool_field(" <> field_num <> ", v)"
-    parser.Bytes -> "encode.field(" <> field_num <> ", wire.LengthDelimited, encode.length_delimited(v))"
-    parser.MessageType(_) -> "encode.message_field(" <> field_num <> ", encode_" <> string.lowercase(flatten_type_name(get_type_name(proto_type))) <> "(v))"
-    parser.EnumType(_) -> "encode.int32_field(" <> field_num <> ", encode_" <> string.lowercase(flatten_type_name(get_type_name(proto_type))) <> "_value(v))"
+    parser.Bytes ->
+      "encode.field("
+      <> field_num
+      <> ", wire.LengthDelimited, encode.length_delimited(v))"
+    parser.MessageType(_) ->
+      "encode.field("
+      <> field_num
+      <> ", wire.LengthDelimited, encode_"
+      <> string.lowercase(flatten_type_name(get_type_name(proto_type)))
+      <> "(v))"
+    parser.EnumType(_) ->
+      "encode.int32_field("
+      <> field_num
+      <> ", encode_"
+      <> string.lowercase(flatten_type_name(get_type_name(proto_type)))
+      <> "_value(v))"
     _ -> "encode.string_field(" <> field_num <> ", \"unsupported\")"
   }
 }
 
-fn generate_map_field_code(field: Field, _param_name: String) -> String {
-  let field_name = string.lowercase(field.name)
+fn generate_map_field_code(field: Field, param_name: String) -> String {
+  let escaped_field_name = types.escape_keyword(field.name)
+  let field_name = string.lowercase(escaped_field_name)
   let var_name = field_name <> "_fields"
-  "let " <> var_name <> " = [] // Map fields not yet implemented"
+  let field_access = param_name <> "." <> escaped_field_name
+
+  case field.field_type {
+    parser.Map(key_type, value_type) -> {
+      let key_encoder = generate_map_key_encoder(key_type)
+      let value_encoder = generate_map_value_encoder(value_type)
+      "let "
+      <> var_name
+      <> " = list.map("
+      <> field_access
+      <> ", fn(pair) { let #(key, value) = pair\n    encode.message(["
+      <> key_encoder
+      <> ", "
+      <> value_encoder
+      <> "]) })"
+    }
+    _ -> "let " <> var_name <> " = [] // Not a map field"
+  }
+}
+
+fn generate_map_key_encoder(proto_type: ProtoType) -> String {
+  case proto_type {
+    parser.String -> "encode.string_field(1, key)"
+    parser.Int32 -> "encode.int32_field(1, key)"
+    parser.Bool -> "encode.bool_field(1, key)"
+    _ -> "encode.string_field(1, \"unsupported\")"
+  }
+}
+
+fn generate_map_value_encoder(proto_type: ProtoType) -> String {
+  case proto_type {
+    parser.String -> "encode.string_field(2, value)"
+    parser.Int32 -> "encode.int32_field(2, value)"
+    parser.Bool -> "encode.bool_field(2, value)"
+    _ -> "encode.string_field(2, \"unsupported\")"
+  }
 }
 
 fn generate_enum_helper(enum: parser.Enum) -> String {
   let encoder_function = generate_enum_encoder(enum)
   let decoder_function = generate_enum_decoder(enum)
-  encoder_function <> "\n\n" <> decoder_function
+  let value_decoder_function = generate_enum_value_decoder(enum)
+  let repeated_decoder_function = generate_repeated_enum_decoder(enum)
+  encoder_function
+  <> "\n\n"
+  <> decoder_function
+  <> "\n\n"
+  <> value_decoder_function
+  <> "\n\n"
+  <> repeated_decoder_function
 }
 
 fn generate_enum_encoder(enum: parser.Enum) -> String {
   let function_name = "encode_" <> string.lowercase(enum.name) <> "_value"
-  let cases = 
+  let cases =
     enum.values
     |> list.map(fn(variant) {
       let variant_name = capitalize_first(variant.name)
@@ -308,56 +454,135 @@ fn generate_enum_encoder(enum: parser.Enum) -> String {
     })
     |> string.join("\n")
 
-  "pub fn " <> function_name <> "(value: " <> enum.name <> ") -> Int {\n  case value {\n" <> 
-  cases <> "\n  }\n}"
+  "pub fn "
+  <> function_name
+  <> "(value: "
+  <> enum.name
+  <> ") -> Int {\n  case value {\n"
+  <> cases
+  <> "\n  }\n}"
 }
 
 fn generate_enum_decoder(enum: parser.Enum) -> String {
   let function_name = "decode_" <> string.lowercase(enum.name) <> "_field"
-  let decode_cases = 
+  let decode_cases =
     enum.values
     |> list.map(fn(variant) {
       let variant_name = capitalize_first(variant.name)
-      "          " <> int.to_string(variant.number) <> " -> Ok(" <> variant_name <> ")"
+      "          "
+      <> int.to_string(variant.number)
+      <> " -> Ok("
+      <> variant_name
+      <> ")"
     })
     |> string.join("\n")
 
-  "pub fn " <> function_name <> "(field_number: Int) -> decode.Decoder(" <> enum.name <> ") {\n" <>
-  "  decode.field(field_number, fn(field) {\n" <>
-  "    use value <- result.try(decode.int32_field(field))\n" <>
-  "    case value {\n" <>
-  decode_cases <> "\n" <>
-  "      _ -> Error(decode.DecodeError(\"Unknown " <> string.lowercase(enum.name) <> " value: \" <> string.inspect(value)))\n" <>
-  "    }\n" <>
-  "  })\n" <>
-  "}"
+  "pub fn "
+  <> function_name
+  <> "(field_num: Int) -> decode.Decoder("
+  <> enum.name
+  <> ") {\n"
+  <> "  decode.field(field_num, fn(field) {\n"
+  <> "    use value <- result.try(decode.int32_field(field))\n"
+  <> "    case value {\n"
+  <> decode_cases
+  <> "\n"
+  <> "      _ -> Error(decode.DecodeError(\"Unknown "
+  <> string.lowercase(enum.name)
+  <> " value: \" <> string.inspect(value)))\n"
+  <> "    }\n"
+  <> "  })\n"
+  <> "}"
+}
+
+fn generate_enum_value_decoder(enum: parser.Enum) -> String {
+  let function_name = "decode_" <> string.lowercase(enum.name) <> "_value"
+  let decode_cases =
+    enum.values
+    |> list.map(fn(variant) {
+      let variant_name = capitalize_first(variant.name)
+      "    "
+      <> int.to_string(variant.number)
+      <> " -> Ok("
+      <> variant_name
+      <> ")"
+    })
+    |> string.join("\n")
+
+  "pub fn "
+  <> function_name
+  <> "(value: Int) -> Result("
+  <> enum.name
+  <> ", String) {\n"
+  <> "  case value {\n"
+  <> decode_cases
+  <> "\n"
+  <> "    _ -> Error(\"Unknown "
+  <> string.lowercase(enum.name)
+  <> " value: \" <> int.to_string(value))\n"
+  <> "  }\n"
+  <> "}"
+}
+
+fn generate_repeated_enum_decoder(enum: parser.Enum) -> String {
+  let function_name = "decode_repeated_" <> string.lowercase(enum.name)
+
+  "pub fn "
+  <> function_name
+  <> "(field_num: Int) -> decode.Decoder(List("
+  <> enum.name
+  <> ")) {\n"
+  <> "  decode.repeated_field(field_num, fn(field) {\n"
+  <> "    use value <- result.try(decode.int32_field(field))\n"
+  <> "    decode_"
+  <> string.lowercase(enum.name)
+  <> "_value(value)\n"
+  <> "    |> result.map_error(fn(err) { decode.DecodeError(expected: \""
+  <> string.lowercase(enum.name)
+  <> "\", found: err, path: []) })\n"
+  <> "  })\n"
+  <> "}"
 }
 
 // Utility functions that should be extracted from the main module
 
 fn collect_all_messages_flattened(messages: List(Message)) -> List(Message) {
   list.fold(messages, [], fn(acc, msg) {
-    let nested = collect_nested_messages_flattened(msg.nested_messages, msg.name)
+    let nested =
+      collect_nested_messages_flattened(msg.nested_messages, msg.name)
     [msg, ..list.append(nested, acc)]
   })
 }
 
-fn collect_nested_messages_flattened(nested_messages: List(Message), parent_name: String) -> List(Message) {
+fn collect_nested_messages_flattened(
+  nested_messages: List(Message),
+  parent_name: String,
+) -> List(Message) {
   list.fold(nested_messages, [], fn(acc, nested_msg) {
     let flattened_name = parent_name <> nested_msg.name
     let flattened_msg = parser.Message(..nested_msg, name: flattened_name)
-    let deeper_nested = collect_nested_messages_flattened(nested_msg.nested_messages, flattened_name)
+    let deeper_nested =
+      collect_nested_messages_flattened(
+        nested_msg.nested_messages,
+        flattened_name,
+      )
     [flattened_msg, ..list.append(deeper_nested, acc)]
   })
 }
 
-fn collect_all_enums_flattened(top_level_enums: List(parser.Enum), messages: List(Message)) -> List(parser.Enum) {
-  let nested_enums = 
+fn collect_all_enums_flattened(
+  top_level_enums: List(parser.Enum),
+  messages: List(Message),
+) -> List(parser.Enum) {
+  let nested_enums =
     messages
     |> list.fold([], fn(acc, msg) {
-      list.append(acc, collect_nested_enums_flattened(msg.enums, msg.nested_messages, msg.name))
+      list.append(
+        acc,
+        collect_nested_enums_flattened(msg.enums, msg.nested_messages, msg.name),
+      )
     })
-  
+
   list.append(top_level_enums, nested_enums)
 }
 
@@ -366,23 +591,32 @@ fn collect_nested_enums_flattened(
   nested_messages: List(Message),
   parent_name: String,
 ) -> List(parser.Enum) {
-  let current_enums = 
+  let current_enums =
     enums
-    |> list.map(fn(enum) {
-      parser.Enum(..enum, name: parent_name <> enum.name)
-    })
+    |> list.map(fn(enum) { parser.Enum(..enum, name: parent_name <> enum.name) })
 
-  let deeper_enums = 
+  let deeper_enums =
     nested_messages
     |> list.fold([], fn(acc, nested_msg) {
       let nested_name = parent_name <> nested_msg.name
-      list.append(acc, collect_nested_enums_flattened(nested_msg.enums, nested_msg.nested_messages, nested_name))
+      list.append(
+        acc,
+        collect_nested_enums_flattened(
+          nested_msg.enums,
+          nested_msg.nested_messages,
+          nested_name,
+        ),
+      )
     })
 
   list.append(current_enums, deeper_enums)
 }
 
-fn qualify_nested_field_type(proto_type: ProtoType, parent_name: String, parent_message: Message) -> ProtoType {
+fn qualify_nested_field_type(
+  proto_type: ProtoType,
+  parent_name: String,
+  parent_message: Message,
+) -> ProtoType {
   case proto_type {
     parser.MessageType(name) -> {
       case is_nested_type_in_message(name, parent_message) {

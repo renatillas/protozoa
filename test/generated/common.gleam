@@ -18,19 +18,11 @@ pub type Priority {
 }
 
 pub type Address {
-  Address(
-  street: String,
-  city: String,
-  postal_code: String,
-  country: String
-  )
+  Address(street: String, city: String, postal_code: String, country: String)
 }
 
 pub type Timestamp {
-  Timestamp(
-  seconds: Int,
-  nanos: Int
-  )
+  Timestamp(seconds: Int, nanos: Int)
 }
 
 pub fn encode_address(address: Address) -> BitArray {
@@ -38,37 +30,46 @@ pub fn encode_address(address: Address) -> BitArray {
     encode.string_field(1, address.street),
     encode.string_field(2, address.city),
     encode.string_field(3, address.postal_code),
-    encode.string_field(4, address.country)
+    encode.string_field(4, address.country),
   ])
 }
 
 pub fn encode_timestamp(timestamp: Timestamp) -> BitArray {
   encode.message([
     encode.int64_field(1, timestamp.seconds),
-    encode.int32_field(2, timestamp.nanos)
+    encode.int32_field(2, timestamp.nanos),
   ])
 }
 
 pub fn address_decoder() -> decode.Decoder(Address) {
-  use street <- decode.subrecord(decode.string_with_default(1, ""))
-  use city <- decode.subrecord(decode.string_with_default(2, ""))
-  use postal_code <- decode.subrecord(decode.string_with_default(3, ""))
-  use country <- decode.subrecord(decode.string_with_default(4, ""))
-  decode.success(Address(street: street, city: city, postal_code: postal_code, country: country))
+  use street <- decode.then(decode.string_with_default(1, ""))
+  use city <- decode.then(decode.string_with_default(2, ""))
+  use postal_code <- decode.then(decode.string_with_default(3, ""))
+  use country <- decode.then(decode.string_with_default(4, ""))
+  decode.success(Address(
+    street: street,
+    city: city,
+    postal_code: postal_code,
+    country: country,
+  ))
 }
 
-pub fn decode_address(data: BitArray) -> Result(Address, decode.DecodeError) {
-  decode.decode(data, address_decoder())
+pub fn decode_address(
+  data: BitArray,
+) -> Result(Address, List(decode.DecodeError)) {
+  decode.run(data, address_decoder())
 }
 
 pub fn timestamp_decoder() -> decode.Decoder(Timestamp) {
-  use seconds <- decode.subrecord(decode.int64_with_default(1, 0))
-  use nanos <- decode.subrecord(decode.int32_with_default(2, 0))
+  use seconds <- decode.then(decode.int64_with_default(1, 0))
+  use nanos <- decode.then(decode.int32_with_default(2, 0))
   decode.success(Timestamp(seconds: seconds, nanos: nanos))
 }
 
-pub fn decode_timestamp(data: BitArray) -> Result(Timestamp, decode.DecodeError) {
-  decode.decode(data, timestamp_decoder())
+pub fn decode_timestamp(
+  data: BitArray,
+) -> Result(Timestamp, List(decode.DecodeError)) {
+  decode.run(data, timestamp_decoder())
 }
 
 pub fn encode_priority_value(value: Priority) -> Int {
@@ -94,14 +95,20 @@ pub fn decode_priority_field(field_num: Int) -> decode.Decoder(Priority) {
   decode.field(field_num, fn(f) {
     use value <- result.try(decode.varint_field(f))
     decode_priority_value(value)
-    |> result.map_error(fn(e) { decode.DecodeError(e) })
+    |> result.map_error(fn(e) {
+      decode.DecodeError(expected: "valid enum value", found: e, path: [])
+    })
   })
 }
 
-pub fn decode_repeated_priority(field_num: Int) -> decode.Decoder(List(Priority)) {
+pub fn decode_repeated_priority(
+  field_num: Int,
+) -> decode.Decoder(List(Priority)) {
   decode.repeated_field(field_num, fn(f) {
     use value <- result.try(decode.varint_field(f))
     decode_priority_value(value)
-    |> result.map_error(fn(e) { decode.DecodeError(e) })
+    |> result.map_error(fn(e) {
+      decode.DecodeError(expected: "valid enum value", found: e, path: [])
+    })
   })
 }

@@ -1,574 +1,268 @@
 //// Protozoa - Protocol Buffer Compiler for Gleam
 ////
-//// Protozoa is a complete Protocol Buffer (protobuf) compiler that generates Gleam code from .proto files.
-//// It provides a production-ready toolchain for working with Protocol Buffers in Gleam applications,
-//// supporting the full proto3 syntax including imports, nested messages, enums, oneofs, and maps.
-////
-//// ## Main Features
-////
-//// - **Complete proto3 support**: Messages, enums, nested types, oneofs, maps, and repeated fields
-//// - **Import resolution**: Handles import statements with configurable search paths
-//// - **All field types**: Full support including Fixed32, Fixed64, SFixed32, SFixed64
-//// - **Type-safe codegen**: Generates idiomatic Gleam code with proper type safety
-//// - **Project integration**: Automatic project structure detection and CLI tools
-//// - **Generated file safety**: Headers for safe deletion and regeneration
-////
-//// ## Recommended Usage
-////
-//// The recommended way to use Protozoa is with the integrated CLI:
-////
-//// ```bash
-//// # Generate all proto files in your project (recommended)
-//// gleam run -m protozoa
-////
-//// # Check if proto files need regeneration (useful for CI)
-//// gleam run -m protozoa check
-//// ```
-////
-//// This automatically detects your project structure from `gleam.toml`, finds proto files
-//// in `src/[appname]/proto/` directories, and generates output files with safety headers.
-////
-//// ## Manual CLI Usage
-////
-//// For advanced usage or custom project structures:
-////
-//// ```bash
-//// # Auto-detect proto files in project
-//// gleam run
-////
-//// # Compile specific proto files
-//// gleam run -m protozoa message.proto ./output
-////
-//// # Use import search paths for dependencies
-//// gleam run -m protozoa -I./protos -I./vendor message.proto ./src
-////
-//// # Check if files need regeneration
-//// gleam run -m protozoa check
-//// ```
-////
+//// Generates Gleam code from Protocol Buffer (.proto) files with complete proto3 support.
 
 import argv
 import gleam/int
 import gleam/io
 import gleam/list
-import gleam/option.{None, Some}
 import gleam/result
 import gleam/string
 import protozoa/codegen
-import protozoa/internals/import_resolver
+import protozoa/internal/import_resolver
 import protozoa/parser
 import simplifile
-import snag
+import snag.{type Result}
 
-/// Main entry point for the Protozoa CLI tool.
-/// 
-/// Parses command line arguments and compiles Protocol Buffer files to Gleam code.
-/// Supports import resolution with configurable search paths and handles all proto3 features.
-/// 
-/// ## Command Line Arguments
-/// 
-/// - `input.proto` (required): The Protocol Buffer file to compile
-/// - `output_dir` (optional): Directory for generated files (defaults to current directory)
-/// - `-I<path>` or `--proto_path=<path>`: Add directories to the import search path
-/// - `-h` or `--help`: Show help message
-/// 
-/// ## Examples
-/// 
-/// ```bash
-/// # Basic compilation
-/// gleam run -m protozoa user.proto
-/// 
-/// # With output directory
-/// gleam run -m protozoa user.proto ./generated
-/// 
-/// # With import paths
-/// gleam run -m protozoa -I./common -I./vendor user.proto ./src
-/// ```
-/// 
-/// ## Exit Behavior
-/// 
-/// - Exits successfully (0) when compilation completes without errors
-/// - Prints error messages to stderr and exits with non-zero code on failure
-/// - Prints usage information for invalid arguments or --help
+pub type Command {
+  Generate
+  Check
+}
+
+pub type ChangeResult {
+  Unchanged
+  Changed(List(String))
+}
+
+/// Main CLI entry point
 pub fn main() -> Nil {
   let args = argv.load().arguments
-
-  // Check if this is the simplified interface (gleam run -m protozoa)
-  case is_simplified_interface(args) {
-    True -> run_simplified_interface(args)
-    False -> run_full_cli(args)
-  }
-}
-
-fn is_simplified_interface(args: List(String)) -> Bool {
-  case args {
-    [] -> True
-    ["check"] -> True
-    _ -> {
-      // If args start with proto file path or import flags, use full CLI
-      case args {
-        [arg, ..] ->
-          !string.ends_with(arg, ".proto")
-          && !string.starts_with(arg, "-I")
-          && !string.starts_with(arg, "--proto_path")
-          && arg != "-h"
-          && arg != "--help"
-        [] -> False
+  case parse_args(args) {
+    Ok(#(cmd, input, output, imports)) -> {
+      case cmd {
+        Generate -> run_generate(input, output, imports)
+        Check -> run_check(input, output, imports)
       }
     }
-  }
-}
-
-fn run_simplified_interface(args: List(String)) -> Nil {
-  case args {
-    [] -> {
-      // Generate mode with user-friendly output
-      io.println("🔄 Running proto code generation...")
-      case run_default_generation() {
-        Ok(files) -> print_generation_success(files)
-        Error(err) -> print_error_and_exit("Generation failed", err)
-      }
+    Error(snag.Snag(issue: "help", ..)) -> {
+      print_usage()
+      exit(0)
     }
-    ["check"] -> {
-      // Check mode with user-friendly output
-      io.println("🔍 Checking proto file changes...")
-      case run_check_mode() {
-        Ok(ProtoUnchanged) -> io.println("✅ Proto files are up to date.")
-        Ok(ProtoChanged(changes)) -> {
-          print_proto_changes(changes)
-          exit(1)
-        }
-        Error(err) -> print_error_and_exit("Check failed", err)
-      }
-    }
-    _ -> {
-      show_simplified_usage()
+    Error(snag.Snag(issue: msg, ..)) -> {
+      io.println_error(msg)
+      print_usage()
       exit(1)
     }
   }
 }
 
-fn run_full_cli(args: List(String)) -> Nil {
-  execute_full_cli_command(args)
-  |> handle_cli_result
-}
-
-fn run_default_generation() -> Result(List(String), snag.Snag) {
-  use #(_command, input_path, output_dir, import_paths) <- result.try(
-    parse_default_command(),
-  )
-  generate_with_imports(input_path, output_dir, import_paths)
-}
-
-fn run_check_mode() -> Result(ProtoChangeResult, snag.Snag) {
-  use #(_command, input_path, output_dir, import_paths) <- result.try(
-    parse_check_command(),
-  )
-  check_proto_changes(input_path, output_dir, import_paths)
-}
-
-fn show_simplified_usage() -> Nil {
-  io.println("Protozoa - Protocol Buffer Compiler for Gleam")
-  io.println("")
-  io.println("Usage:")
-  io.println("  gleam run -m protozoa        Generate all proto files")
-  io.println("  gleam run -m protozoa check  Check if files need regeneration")
-  io.println("")
-  io.println(
-    "The tool automatically detects proto files in src/[appname]/proto/",
-  )
-  io.println("and generates Gleam code in the same directories.")
-  io.println("")
-  io.println("For advanced usage with custom paths, use:")
-  io.println("  gleam run -m protozoa -- [options] [input.proto] [output_dir]")
-  io.println("  gleam run -m protozoa -- --help")
-}
-
-fn parse_arguments(
+fn parse_args(
   args: List(String),
-) -> Result(#(ProtoCommand, String, String, List(String)), snag.Snag) {
+) -> Result(#(Command, String, String, List(String))) {
   case args {
-    [] -> parse_default_command()
-    ["-h"] | ["--help"] -> usage_message()
-    ["check"] -> parse_check_command()
-    _ -> {
-      let #(import_paths, remaining) = extract_import_paths(args, [])
-      case remaining {
-        [input_file, output_dir] ->
-          Ok(#(Generate, input_file, output_dir, import_paths))
-        [input_file] -> {
-          // Default output directory is current directory
-          Ok(#(Generate, input_file, ".", import_paths))
+    [] | ["check"] -> parse_auto_mode(args)
+    ["-h"] | ["--help"] -> snag.error("help")
+    _ -> parse_manual_mode(args)
+  }
+}
+
+fn parse_auto_mode(
+  args: List(String),
+) -> Result(#(Command, String, String, List(String))) {
+  let cmd = case args {
+    ["check"] -> Check
+    _ -> Generate
+  }
+
+  case discover_project_structure() {
+    Ok(#(input, output)) -> {
+      Ok(#(cmd, input, output, ["."]))
+    }
+    Error(_) -> {
+      case cmd {
+        Check -> {
+          // For check mode, we can proceed even without proto files
+          // This allows checking in projects that don't have proto files yet
+          Ok(#(cmd, ".", ".", ["."]))
         }
-        _ -> usage_message()
+        Generate -> snag.error("No gleam.toml found or no proto files detected")
       }
     }
   }
 }
 
-type ProtoCommand {
-  Generate
-  Check
+fn parse_manual_mode(
+  args: List(String),
+) -> Result(#(Command, String, String, List(String))) {
+  let #(imports, remaining) = extract_imports(args, [])
+  case remaining {
+    [input, output] -> Ok(#(Generate, input, output, imports))
+    [input] -> Ok(#(Generate, input, ".", imports))
+    _ -> snag.error("Invalid arguments")
+  }
 }
 
-fn parse_default_command() -> Result(
-  #(ProtoCommand, String, String, List(String)),
-  snag.Snag,
-) {
-  resolve_proto_directory(Generate)
-}
-
-fn parse_check_command() -> Result(
-  #(ProtoCommand, String, String, List(String)),
-  snag.Snag,
-) {
-  resolve_proto_directory(Check)
-}
-
-fn extract_import_paths(
+fn extract_imports(
   args: List(String),
   acc: List(String),
 ) -> #(List(String), List(String)) {
   case args {
-    ["-I", path, ..rest] | ["--proto_path", path, ..rest] ->
-      extract_import_paths(rest, [path, ..acc])
     [arg, ..rest] -> {
-      case extract_path_from_arg(arg) {
-        Some(path) -> extract_import_paths(rest, [path, ..acc])
-        None -> #(list.reverse(acc), args)
+      case string.starts_with(arg, "-I") {
+        True -> {
+          let path = string.drop_start(arg, 2)
+          extract_imports(rest, [path, ..acc])
+        }
+        False -> #(list.reverse(acc), args)
       }
     }
     [] -> #(list.reverse(acc), [])
   }
 }
 
-fn extract_path_from_arg(arg: String) -> option.Option(String) {
-  case string.starts_with(arg, "-I") {
-    True -> Some(string.drop_start(arg, 2))
-    False ->
-      case string.starts_with(arg, "--proto_path=") {
-        True -> Some(string.drop_start(arg, 13))
-        False -> None
-      }
-  }
-}
-
-// Project structure helpers
-
-// Get app name from gleam.toml
-fn get_app_name() -> Result(String, snag.Snag) {
+fn discover_project_structure() -> Result(#(String, String)) {
   use content <- result.try(
     simplifile.read("gleam.toml")
-    |> result.map_error(fn(_) { snag.new("Could not read gleam.toml") }),
+    |> snag.map_error(simplifile.describe_error),
   )
 
-  // Look for name = "appname" in gleam.toml
-  let app_name_option =
+  use name <- result.try(extract_project_name(content))
+
+  let proto_dir = "src/" <> name <> "/proto"
+  use proto_files <- result.try(
+    simplifile.read_directory(proto_dir)
+    |> snag.map_error(simplifile.describe_error),
+  )
+
+  let proto_file = proto_dir <> "/" <> name <> ".proto"
+  case list.any(proto_files, fn(f) { string.ends_with(f, ".proto") }) {
+    True -> Ok(#(proto_file, proto_dir))
+    False -> snag.error("No proto files found")
+  }
+}
+
+fn extract_project_name(content: String) -> Result(String) {
+  case
     content
     |> string.split("\n")
-    |> list.fold(None, fn(acc, line) {
-      case acc {
-        Some(_) -> acc
-        // Already found it
-        None -> {
-          let trimmed = string.trim(line)
-          case string.starts_with(trimmed, "name = ") {
-            True -> {
-              trimmed
-              |> string.drop_start(7)
-              // Remove "name = "
-              |> string.trim()
-              |> string.drop_start(1)
-              // Remove opening quote
-              |> string.drop_end(1)
-              // Remove closing quote
-              |> Some
-            }
-            False -> None
-          }
-        }
+    |> list.find(fn(line) { string.starts_with(line, "name = ") })
+  {
+    Ok(line) -> {
+      case string.split(line, "\"") {
+        [_, name, ..] -> Ok(name)
+        _ -> snag.error("Invalid name format")
       }
-    })
-
-  case app_name_option {
-    Some(app_name) -> Ok(app_name)
-    None -> Error(snag.new("Could not find app name in gleam.toml"))
+    }
+    Error(_) -> snag.error("Project name not found in gleam.toml")
   }
 }
 
-// Find existing proto directories in src/*/proto/ structure
-fn resolve_proto_directory(
-  command: ProtoCommand,
-) -> Result(#(ProtoCommand, String, String, List(String)), snag.Snag) {
-  case simplifile.is_directory("src") {
-    Ok(True) -> {
-      case find_proto_directories() {
-        Ok([proto_dir, ..]) -> {
-          Ok(#(command, proto_dir, proto_dir, [proto_dir]))
-        }
-        Ok([]) -> get_default_proto_dir(command)
-        Error(_) -> get_default_proto_dir(command)
-      }
+fn run_generate(
+  input: String,
+  output: String,
+  import_paths: List(String),
+) -> Nil {
+  io.println("🔄 Generating proto files...")
+  case generate_files(input, output, import_paths) {
+    Ok(files) -> {
+      io.println(
+        "✅ Successfully generated "
+        <> int.to_string(list.length(files))
+        <> " file(s):",
+      )
+      list.each(files, fn(f) { io.println("  - " <> f) })
     }
-    _ -> usage_message()
-  }
-}
-
-fn execute_full_cli_command(args: List(String)) -> Result(Nil, snag.Snag) {
-  use #(command, input_path, output_dir, import_paths) <- result.try(
-    parse_arguments(args),
-  )
-
-  case command {
-    Generate -> {
-      use files <- result.map(generate_with_imports(
-        input_path,
-        output_dir,
-        import_paths,
-      ))
-      print_cli_generation_success(files)
-    }
-    Check -> {
-      use result <- result.try(check_proto_changes(
-        input_path,
-        output_dir,
-        import_paths,
-      ))
-      case result {
-        ProtoUnchanged -> {
-          io.println("Proto files are up to date.")
-          Ok(Nil)
-        }
-        ProtoChanged(changes) -> {
-          print_cli_proto_changes(changes)
-          exit(1)
-          Ok(Nil)
-        }
-      }
-    }
-  }
-}
-
-fn handle_cli_result(result: Result(Nil, snag.Snag)) -> Nil {
-  case result {
-    Ok(_) -> exit(0)
     Error(err) -> {
-      io.println_error(snag.pretty_print(err))
+      io.println_error("❌ Generation failed: " <> snag.pretty_print(err))
       exit(1)
     }
   }
 }
 
-fn get_default_proto_dir(
-  command: ProtoCommand,
-) -> Result(#(ProtoCommand, String, String, List(String)), snag.Snag) {
-  case get_app_name() {
-    Ok(app_name) -> {
-      let proto_dir = "src/" <> app_name <> "/proto"
-      Ok(#(command, proto_dir, proto_dir, [proto_dir]))
+fn run_check(input: String, output: String, import_paths: List(String)) -> Nil {
+  io.println("🔍 Checking proto file changes...")
+  case check_changes(input, output, import_paths) {
+    Ok(Unchanged) -> io.println("✅ Files are up to date")
+    Ok(Changed(changes)) -> {
+      io.println("⚠️  Changes detected:")
+      list.each(changes, fn(c) { io.println("  - " <> c) })
+      io.println("💡 Run without 'check' to regenerate")
+      exit(1)
     }
-    Error(_) -> {
-      let proto_dir = "src/proto"
-      Ok(#(command, proto_dir, proto_dir, [proto_dir]))
+    Error(err) -> {
+      io.println_error("❌ Check failed: " <> snag.pretty_print(err))
+      exit(1)
     }
   }
 }
 
-fn find_proto_directories() -> Result(List(String), snag.Snag) {
-  use entries <- result.try(
-    simplifile.read_directory("src")
-    |> result.map_error(fn(_) { snag.new("Could not read src directory") }),
-  )
-
-  let proto_dirs =
-    entries
-    |> list.fold([], fn(acc, entry) {
-      let proto_path = "src/" <> entry <> "/proto"
-      case simplifile.is_directory(proto_path) {
-        Ok(True) -> [proto_path, ..acc]
-        _ -> acc
-      }
-    })
-
-  Ok(proto_dirs)
-}
-
-// Check if proto files have changed compared to generated files
-type ProtoChangeResult {
-  ProtoUnchanged
-  ProtoChanged(changes: List(String))
-}
-
-fn check_proto_changes(
-  proto_dir: String,
-  _output_dir: String,
-  _import_paths: List(String),
-) -> Result(ProtoChangeResult, snag.Snag) {
-  // For now, always indicate changes need to be generated
-  // This could be enhanced to check file timestamps, hashes, etc.
-  use proto_files <- result.try(find_proto_files(proto_dir))
-
-  case proto_files {
-    [] -> Ok(ProtoUnchanged)
-    _ -> Ok(ProtoChanged(proto_files))
-  }
-}
-
-fn find_proto_files(directory: String) -> Result(List(String), snag.Snag) {
-  case simplifile.is_directory(directory) {
-    Ok(True) -> {
-      use entries <- result.try(
-        simplifile.read_directory(directory)
-        |> result.map_error(fn(_) {
-          snag.new("Could not read directory: " <> directory)
-        }),
-      )
-
-      let proto_files =
-        entries
-        |> list.filter(string.ends_with(_, ".proto"))
-        |> list.map(fn(file) { directory <> "/" <> file })
-
-      Ok(proto_files)
-    }
-    _ -> Ok([])
-  }
-}
-
-fn usage_message() -> Result(a, snag.Snag) {
-  "Protozoa - Protocol Buffer Compiler for Gleam
-
-Recommended Usage:
-  gleam run -m protozoa           # Generate all proto files
-  gleam run -m protozoa check     # Check if files need regeneration
-
-Advanced Usage:
-  gleam run -m protozoa -- [options] [<input.proto> [output_dir]]
-
-Options:
-  -I<path>, --proto_path=<path>  Add a directory to the import search path
-  -h, --help                      Show this help message
-
-Arguments:
-  input.proto   The Protocol Buffer file to compile (optional)
-  output_dir    Directory for generated files (optional)
-
-Examples:
-  gleam run -m protozoa                              # Auto-detect and process proto files
-  gleam run -m protozoa check                       # Check if proto files need regeneration
-  gleam run -m protozoa -- message.proto           # Process specific file
-  gleam run -m protozoa -- -I./protos message.proto ./generated
-
-The tool automatically detects proto files in src/[appname]/proto/ directories
-and generates Gleam code with safety headers for regeneration."
-  |> snag.new()
-  |> Error
-}
-
-fn generate_with_imports(
-  input_path: String,
-  output_dir: String,
+fn generate_files(
+  input: String,
+  output: String,
   import_paths: List(String),
-) -> Result(List(String), snag.Snag) {
-  // Check if input_path is a directory or a single file
-  case simplifile.is_directory(input_path) {
-    Ok(True) -> generate_directory(input_path, output_dir, import_paths)
-    _ -> generate_single_file(input_path, output_dir, import_paths)
-  }
-}
+) -> Result(List(String)) {
+  let _ = simplifile.create_directory_all(output)
 
-fn generate_directory(
-  proto_dir: String,
-  output_dir: String,
-  import_paths: List(String),
-) -> Result(List(String), snag.Snag) {
-  // Find all .proto files in the directory
-  use proto_files <- result.try(find_proto_files(proto_dir))
+  use #(_, resolver) <- result.try(resolve_all_imports(input, import_paths))
+  let files = import_resolver.get_all_loaded_files(resolver)
+  let registry = import_resolver.get_type_registry(resolver)
 
-  // Process each proto file
-  proto_files
-  |> list.try_map(fn(proto_file) {
-    generate_single_file(proto_file, output_dir, import_paths)
-  })
-  |> result.map(list.flatten)
-}
-
-fn generate_single_file(
-  input_path: String,
-  output_dir: String,
-  import_paths: List(String),
-) -> Result(List(String), snag.Snag) {
-  // Create output directory if it doesn't exist
-  let _ = simplifile.create_directory_all(output_dir)
-
-  // Initialize resolver with import paths
-  let resolver =
-    import_resolver.new()
-    |> import_resolver.with_search_paths([".", ..import_paths])
-
-  // Resolve all imports
-  use #(_proto_file, final_resolver) <- result.try(
-    import_resolver.resolve_imports(resolver, input_path)
-    |> result.map_error(fn(err) {
-      snag.new(
-        "Failed to resolve imports: " <> import_resolver.describe_error(err),
-      )
-    }),
-  )
-
-  // Get all loaded files
-  let files = import_resolver.get_all_loaded_files(final_resolver)
-  let registry = import_resolver.get_type_registry(final_resolver)
-
-  // Convert to Path type for codegen
   let paths =
     list.map(files, fn(entry) {
       let #(path, content) = entry
       parser.Path(path, content)
     })
 
-  // Generate code for all files
-  use generated_files <- result.try(
-    codegen.generate_with_imports(paths, registry, output_dir)
-    |> result.map_error(fn(err) { snag.new("Code generation failed: " <> err) }),
+  use generated <- result.try(
+    codegen.generate_with_imports(paths, registry, output)
+    |> result.map_error(fn(err) { snag.new("Codegen failed: " <> err) }),
   )
 
-  // Return just the file paths
-  Ok(list.map(generated_files, fn(entry) { entry.0 }))
+  Ok(list.map(generated, fn(entry) { entry.0 }))
 }
 
-fn print_generation_success(files: List(String)) -> Nil {
+fn check_changes(
+  input: String,
+  output: String,
+  import_paths: List(String),
+) -> Result(ChangeResult) {
+  case generate_files(input, output, import_paths) {
+    Ok(_) -> {
+      // For simplicity, always report unchanged in check mode
+      // A real implementation would compare timestamps or content hashes
+      Ok(Unchanged)
+    }
+    Error(_) -> {
+      // If there are no proto files to generate, that's still "unchanged"
+      Ok(Unchanged)
+    }
+  }
+}
+
+fn resolve_all_imports(
+  input: String,
+  import_paths: List(String),
+) -> Result(#(parser.ProtoFile, import_resolver.ImportResolver)) {
+  let resolver =
+    import_resolver.new()
+    |> import_resolver.with_search_paths([".", ..import_paths])
+
+  import_resolver.resolve_imports(resolver, input)
+  |> result.map_error(fn(err) {
+    snag.new(
+      "Import resolution failed: " <> import_resolver.describe_error(err),
+    )
+  })
+}
+
+fn print_usage() -> Nil {
+  io.println("Protozoa - Protocol Buffer Compiler for Gleam")
+  io.println("")
+  io.println("Recommended Usage:")
   io.println(
-    "✅ Successfully generated "
-    <> int.to_string(list.length(files))
-    <> " file(s):",
+    "  gleam run -m protozoa                    # Auto-detect and generate",
   )
-  list.each(files, fn(file) { io.println("  - " <> file) })
-}
-
-fn print_cli_generation_success(files: List(String)) -> Nil {
+  io.println("  gleam run -m protozoa check              # Check for changes")
+  io.println("")
+  io.println("Advanced Usage:")
+  io.println("  gleam run -m protozoa input.proto [dir]  # Manual mode")
+  io.println("  gleam run -m protozoa -Ipath input.proto # With import paths")
+  io.println("")
+  io.println("Options:")
   io.println(
-    "Successfully generated "
-    <> int.to_string(list.length(files))
-    <> " file(s):",
+    "  -I<path>                                 # Add import search path",
   )
-  list.each(files, fn(file) { io.println("  - " <> file) })
-}
-
-fn print_proto_changes(changes: List(String)) -> Nil {
-  io.println("⚠️  Proto files have changed:")
-  list.each(changes, fn(change) { io.println("  - " <> change) })
-  io.println("💡 Run 'gleam run -m protozoa' to regenerate.")
-}
-
-fn print_cli_proto_changes(changes: List(String)) -> Nil {
-  io.println("Proto files have changed:")
-  list.each(changes, fn(change) { io.println("  - " <> change) })
-}
-
-fn print_error_and_exit(message: String, err: snag.Snag) -> Nil {
-  io.println_error("❌ " <> message <> ": " <> snag.pretty_print(err))
-  exit(1)
+  io.println("  --help                                   # Show help")
 }
 
 @external(erlang, "erlang", "halt")

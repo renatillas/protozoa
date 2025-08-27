@@ -10,13 +10,12 @@ import protozoa/decode
 import protozoa/encode
 
 pub type FieldMask {
-  FieldMask(
-    paths: List(String),
-  )
+  FieldMask(paths: List(String))
 }
 
 pub fn encode_fieldmask(fieldmask: FieldMask) -> BitArray {
-  let paths_fields = list.map(fieldmask.paths, fn(v) { encode.string_field(1, v) })
+  let paths_fields =
+    list.map(fieldmask.paths, fn(v) { encode.string_field(1, v) })
   encode.message(paths_fields)
 }
 
@@ -25,6 +24,8 @@ pub fn fieldmask_decoder() -> decode.Decoder(FieldMask) {
   decode.success(FieldMask(paths: paths))
 }
 
-pub fn decode_fieldmask(data: BitArray) -> Result(FieldMask, List(decode.DecodeError)) {
+pub fn decode_fieldmask(
+  data: BitArray,
+) -> Result(FieldMask, List(decode.DecodeError)) {
   decode.run(data, fieldmask_decoder())
 }

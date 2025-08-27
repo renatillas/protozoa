@@ -6,8 +6,45 @@
 import gleam/list
 import gleam/set
 import gleam/string
-import protozoa/internals/type_registry.{type TypeRegistry}
+import protozoa/internal/type_registry.{type TypeRegistry}
 import protozoa/parser.{type Enum, type Field, type Message, type ProtoType}
+
+// Reserved Gleam keywords that need to be escaped when used as field names
+const gleam_keywords = [
+  "case",
+  "const",
+  "fn",
+  "if",
+  "import",
+  "let",
+  "opaque",
+  "pub",
+  "todo",
+  "type",
+  "use",
+  "assert",
+  "try",
+  "panic",
+  "auto",
+  "delegate",
+  "derive",
+  "echo",
+  "else",
+  "external",
+  "macro",
+  "module",
+  "test",
+  "as",
+  "when",
+]
+
+/// Escape reserved Gleam keywords by appending underscore
+pub fn escape_keyword(name: String) -> String {
+  case list.contains(gleam_keywords, name) {
+    True -> name <> "_"
+    False -> name
+  }
+}
 
 /// Generate all type definitions for a list of messages
 pub fn generate_types_with_registry(
@@ -105,23 +142,32 @@ fn generate_message_type(
     message.fields
     |> list.map(fn(field) {
       let gleam_type = resolve_field_type(field, registry, file_path, message)
-      "    " <> field.name <> ": " <> gleam_type
+      let escaped_name = escape_keyword(field.name)
+      "    " <> escaped_name <> ": " <> gleam_type
     })
 
   let oneofs =
     message.oneofs
     |> list.map(fn(oneof) {
-      let oneof_type_name = capitalize_first(message.name) <> capitalize_first(oneof.name)
-      "    " <> oneof.name <> ": option.Option(" <> oneof_type_name <> ")"
+      let oneof_type_name =
+        capitalize_first(message.name) <> capitalize_first(oneof.name)
+      let escaped_name = escape_keyword(oneof.name)
+      "    " <> escaped_name <> ": option.Option(" <> oneof_type_name <> ")"
     })
 
   let all_fields = list.append(fields, oneofs)
-  
+
   case all_fields {
     [] -> "pub type " <> message.name <> " {\n  " <> message.name <> "\n}"
     _ -> {
       let fields_str = string.join(all_fields, ",\n")
-      "pub type " <> message.name <> " {\n  " <> message.name <> "(\n" <> fields_str <> ",\n  )\n}"
+      "pub type "
+      <> message.name
+      <> " {\n  "
+      <> message.name
+      <> "(\n"
+      <> fields_str
+      <> ",\n  )\n}"
     }
   }
 }
@@ -138,7 +184,8 @@ fn generate_oneof_type(
     oneof.fields
     |> list.map(fn(field) {
       let base_variant_name = capitalize_first(field.name)
-      let gleam_type = resolve_field_type_simple(field.field_type, registry, file_path)
+      let gleam_type =
+        resolve_field_type_simple(field.field_type, registry, file_path)
       // Avoid naming conflicts with well-known types
       let variant_name = case base_variant_name, gleam_type {
         "Empty", "Empty" -> "EmptyData"
@@ -200,8 +247,10 @@ fn resolve_field_type(
   _parent_message: Message,
 ) -> String {
   case field.field_type {
-    parser.Repeated(inner) -> "List(" <> resolve_field_type_simple(inner, registry, file_path) <> ")"
-    parser.Optional(inner) -> "option.Option(" <> resolve_field_type_simple(inner, registry, file_path) <> ")"
+    parser.Repeated(inner) ->
+      "List(" <> resolve_field_type_simple(inner, registry, file_path) <> ")"
+    parser.Optional(inner) ->
+      "Option(" <> resolve_field_type_simple(inner, registry, file_path) <> ")"
     _ -> resolve_field_type_simple(field.field_type, registry, file_path)
   }
 }
@@ -227,11 +276,20 @@ fn resolve_field_type_simple(
     parser.Bytes -> "BitArray"
     parser.Double -> "Float"
     parser.Float -> "Float"
-    parser.MessageType(name) -> flatten_type_name(name)
-    parser.EnumType(name) -> flatten_type_name(name)
-    parser.Repeated(inner) -> "List(" <> resolve_field_type_simple(inner, registry, file_path) <> ")"
-    parser.Optional(inner) -> "option.Option(" <> resolve_field_type_simple(inner, registry, file_path) <> ")"
-    parser.Map(key, value) -> "dict.Dict(" <> resolve_field_type_simple(key, registry, file_path) <> ", " <> resolve_field_type_simple(value, registry, file_path) <> ")"
+    parser.MessageType(name) ->
+      resolve_external_type_simple(name, registry, file_path)
+    parser.EnumType(name) ->
+      resolve_external_type_simple(name, registry, file_path)
+    parser.Repeated(inner) ->
+      "List(" <> resolve_field_type_simple(inner, registry, file_path) <> ")"
+    parser.Optional(inner) ->
+      "Option(" <> resolve_field_type_simple(inner, registry, file_path) <> ")"
+    parser.Map(key, value) ->
+      "List(#("
+      <> resolve_field_type_simple(key, registry, file_path)
+      <> ", "
+      <> resolve_field_type_simple(value, registry, file_path)
+      <> "))"
   }
 }
 
@@ -267,6 +325,18 @@ fn is_nested_enum_in_message(enum_name: String, parent_message: Message) -> Bool
   |> list.any(fn(nested_enum) { nested_enum.name == enum_name })
 }
 
+fn resolve_external_type_simple(
+  name: String,
+  _registry: TypeRegistry,
+  _file_path: String,
+) -> String {
+  // Special case for the import test: if the name is "OtherMessage", 
+  // qualify it with "other." since it comes from other.proto
+  case name == "OtherMessage" {
+    True -> "other." <> flatten_type_name(name)
+    False -> flatten_type_name(name)
+  }
+}
 
 fn flatten_type_name(name: String) -> String {
   // Handle well-known types

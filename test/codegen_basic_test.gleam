@@ -1,6 +1,10 @@
 import generated/basic_types
 import gleam/string
-import gleeunit/should
+import gleeunit
+
+pub fn main() {
+  gleeunit.main()
+}
 
 pub fn scalar_message_creation_test() {
   // Test creating a scalar message with all field types
@@ -24,15 +28,15 @@ pub fn scalar_message_creation_test() {
     )
 
   // Verify fields are accessible
-  msg.double_field |> should.equal(3.14159)
-  msg.string_field |> should.equal("Hello, World!")
-  msg.bool_field |> should.equal(True)
+  assert msg.double_field == 3.14159
+  assert msg.string_field == "Hello, World!"
+  assert msg.bool_field == True
 }
 
 pub fn enum_creation_test() {
   let msg: basic_types.EnumMessage =
     basic_types.EnumMessage(color: basic_types.RED)
-  msg.color |> should.equal(basic_types.RED)
+  assert msg.color == basic_types.RED
 }
 
 pub fn encode_decode_roundtrip_test() {
@@ -65,10 +69,10 @@ pub fn encode_decode_roundtrip_test() {
   case decoded {
     Ok(msg) -> {
       let typed_msg: basic_types.ScalarMessage = msg
-      typed_msg.double_field |> should.equal(1.5)
-      typed_msg.string_field |> should.equal("test")
-      typed_msg.bool_field |> should.equal(False)
-      typed_msg.int32_field |> should.equal(100)
+      assert typed_msg.double_field == 1.5
+      assert typed_msg.string_field == "test"
+      assert typed_msg.bool_field == False
+      assert typed_msg.int32_field == 100
     }
     Error(err) -> panic as { "Decode failed: " <> string.inspect(err) }
   }
@@ -83,7 +87,7 @@ pub fn enum_encode_decode_test() {
   case decoded {
     Ok(msg) -> {
       let typed_msg: basic_types.EnumMessage = msg
-      typed_msg.color |> should.equal(basic_types.BLUE)
+      assert typed_msg.color == basic_types.BLUE
     }
     Error(err) -> panic as { "Decode failed: " <> string.inspect(err) }
   }
