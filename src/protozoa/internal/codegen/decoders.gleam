@@ -6,7 +6,7 @@
 import gleam/int
 import gleam/list
 import gleam/string
-import protozoa/internal/codegen/types
+import protozoa/internal/codegen/types.{capitalize_first, flatten_type_name}
 import protozoa/internal/type_registry.{type TypeRegistry}
 import protozoa/parser.{type Field, type Message, type ProtoType}
 
@@ -256,34 +256,7 @@ fn get_field_decoder_for_type(field_type: parser.ProtoType) -> String {
   }
 }
 
-fn capitalize_first(str: String) -> String {
-  // Convert snake_case to PascalCase
-  str
-  |> string.split("_")
-  |> list.map(fn(part) {
-    case string.pop_grapheme(part) {
-      Ok(#(first, rest)) -> string.uppercase(first) <> rest
-      Error(_) -> part
-    }
-  })
-  |> string.join("")
-}
 
-fn flatten_type_name(name: String) -> String {
-  // Handle well-known types and flatten dotted names
-  case name {
-    "google.protobuf.Timestamp" -> "Timestamp"
-    "google.protobuf.Duration" -> "Duration"
-    "google.protobuf.FieldMask" -> "FieldMask"
-    "google.protobuf.Empty" -> "Empty"
-    "google.protobuf.Any" -> "Any"
-    _ -> {
-      // Convert dotted names like "OuterMessage.NestedMessage" to "OuterMessageNestedMessage"
-      name
-      |> string.replace(".", "")
-    }
-  }
-}
 
 fn generate_decoder_function_body(message: Message) -> String {
   let field_decoders =
@@ -354,11 +327,11 @@ fn generate_type_decoder(proto_type: ProtoType, field_num: String) -> String {
       "decode.nested_message("
       <> field_num
       <> ", "
-      <> string.lowercase(flatten_name(name))
+      <> string.lowercase(flatten_type_name(name))
       <> "_decoder())"
     parser.EnumType(name) ->
       "decode_"
-      <> string.lowercase(flatten_name(name))
+      <> string.lowercase(flatten_type_name(name))
       <> "_field("
       <> field_num
       <> ")"
@@ -381,7 +354,7 @@ fn generate_optional_type_decoder(
       "decode.optional_nested_message("
       <> field_num
       <> ", "
-      <> string.lowercase(flatten_name(name))
+      <> string.lowercase(flatten_type_name(name))
       <> "_decoder())"
     _ ->
       "decode.optional_field("
@@ -401,7 +374,7 @@ fn generate_repeated_type_decoder(
     parser.Int32 -> "decode.repeated_int32(" <> field_num <> ")"
     parser.EnumType(name) ->
       "decode_repeated_"
-      <> string.lowercase(flatten_name(name))
+      <> string.lowercase(flatten_type_name(name))
       <> "("
       <> field_num
       <> ")"
@@ -518,18 +491,3 @@ fn collect_nested_messages_flattened(
   })
 }
 
-fn flatten_name(name: String) -> String {
-  // Handle well-known types
-  case name {
-    "google.protobuf.Timestamp" -> "Timestamp"
-    "google.protobuf.Duration" -> "Duration"
-    "google.protobuf.FieldMask" -> "FieldMask"
-    "google.protobuf.Empty" -> "Empty"
-    "google.protobuf.Any" -> "Any"
-    _ -> {
-      // Convert dotted names like "OuterMessage.NestedMessage" to "OuterMessageNestedMessage"
-      name
-      |> string.replace(".", "")
-    }
-  }
-}

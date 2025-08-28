@@ -111,6 +111,13 @@ pub type ProtoType {
   Map(ProtoType, ProtoType)
 }
 
+/// Represents a field option in a Protocol Buffer field definition.
+pub type FieldOption {
+  Deprecated(Bool)
+  JsonName(String)
+  Packed(Bool)
+}
+
 /// Represents a field in a Protocol Buffer message.
 pub type Field {
   Field(
@@ -118,6 +125,7 @@ pub type Field {
     field_type: ProtoType,
     number: Int,
     oneof_name: Option(String),
+    options: List(FieldOption),
   )
 }
 
@@ -740,6 +748,51 @@ fn parse_field_line(
   }
 }
 
+/// Parse field options from a string like "[deprecated=true, json_name="myfield"]"
+fn parse_field_options(options_str: String) -> List(FieldOption) {
+  let trimmed = string.trim(options_str)
+  case trimmed {
+    "" -> []
+    _ -> {
+      case string.starts_with(trimmed, "[") && string.ends_with(trimmed, "]") {
+        True -> {
+          let content = trimmed |> string.drop_start(1) |> string.drop_end(1) |> string.trim()
+          case content {
+            "" -> []
+            _ -> parse_option_list(content)
+          }
+        }
+        False -> []
+      }
+    }
+  }
+}
+
+fn parse_option_list(content: String) -> List(FieldOption) {
+  content
+  |> string.split(",")
+  |> list.map(string.trim)
+  |> list.filter_map(parse_single_option)
+}
+
+fn parse_single_option(option_str: String) -> Result(FieldOption, Nil) {
+  case string.split(option_str, "=") {
+    ["deprecated", "true"] -> Ok(Deprecated(True))
+    ["deprecated", "false"] -> Ok(Deprecated(False))
+    ["packed", "true"] -> Ok(Packed(True))  
+    ["packed", "false"] -> Ok(Packed(False))
+    ["json_name", value] -> {
+      // Remove quotes from json_name value
+      let clean_value = case string.starts_with(value, "\"") && string.ends_with(value, "\"") {
+        True -> value |> string.drop_start(1) |> string.drop_end(1)
+        False -> value
+      }
+      Ok(JsonName(clean_value))
+    }
+    _ -> Error(Nil)
+  }
+}
+
 fn parse_field(
   clean_line: String,
   oneof_name: Option(String),
@@ -750,14 +803,34 @@ fn parse_field(
     [] -> clean_line
   }
 
-  case string.split(clean_line, " ") {
+  // Extract field options if present
+  let #(line_without_options, field_options) = case string.split_once(clean_line, "[") {
+    Ok(#(before, after)) -> {
+      case string.split_once(after, "]") {
+        Ok(#(options_content, remaining)) -> {
+          let options = parse_field_options("[" <> options_content <> "]")
+          // Remove semicolon from remaining part if present
+          let cleaned_remaining = string.trim(remaining) |> string.replace(";", "")
+          let cleaned_line = case cleaned_remaining {
+            "" -> string.trim(before)
+            _ -> string.trim(before) <> " " <> cleaned_remaining
+          }
+          #(cleaned_line, options)
+        }
+        Error(_) -> #(clean_line, [])  // Malformed options, ignore
+      }
+    }
+    Error(_) -> #(clean_line, [])
+  }
+
+  case string.split(line_without_options, " ") {
     ["repeated", type_str, name, "=", num_str] -> {
       case string_to_int(num_str) {
         Some(num) -> {
           case num <= 0 {
             True -> Error(InvalidFieldNumber(name, num_str))
             False ->
-              Ok(Field(name, Repeated(parse_type(type_str)), num, oneof_name))
+              Ok(Field(name, Repeated(parse_type(type_str)), num, oneof_name, field_options))
           }
         }
         None -> Error(InvalidFieldNumber(name, num_str))
@@ -769,7 +842,7 @@ fn parse_field(
           case num <= 0 {
             True -> Error(InvalidFieldNumber(name, num_str))
             False ->
-              Ok(Field(name, Optional(parse_type(type_str)), num, oneof_name))
+              Ok(Field(name, Optional(parse_type(type_str)), num, oneof_name, field_options))
           }
         }
         None -> Error(InvalidFieldNumber(name, num_str))
@@ -780,7 +853,7 @@ fn parse_field(
         Some(num) -> {
           case num <= 0 {
             True -> Error(InvalidFieldNumber(name, num_str))
-            False -> Ok(Field(name, parse_type(type_str), num, oneof_name))
+            False -> Ok(Field(name, parse_type(type_str), num, oneof_name, field_options))
           }
         }
         None -> Error(InvalidFieldNumber(name, num_str))
@@ -794,7 +867,27 @@ fn parse_map_field(
   clean_line: String,
   oneof_name: Option(String),
 ) -> Result(Field, ParseError) {
-  case string.split(clean_line, ">") {
+  // Extract field options if present
+  let #(line_without_options, field_options) = case string.split_once(clean_line, "[") {
+    Ok(#(before, after)) -> {
+      case string.split_once(after, "]") {
+        Ok(#(options_content, remaining)) -> {
+          let options = parse_field_options("[" <> options_content <> "]")
+          // Remove semicolon from remaining part if present
+          let cleaned_remaining = string.trim(remaining) |> string.replace(";", "")
+          let cleaned_line = case cleaned_remaining {
+            "" -> string.trim(before)
+            _ -> string.trim(before) <> " " <> cleaned_remaining
+          }
+          #(cleaned_line, options)
+        }
+        Error(_) -> #(clean_line, [])
+      }
+    }
+    Error(_) -> #(clean_line, [])
+  }
+
+  case string.split(line_without_options, ">") {
     [map_type_part, rest] -> {
       let map_type = map_type_part <> ">"
       let parts = string.split(string.trim(rest), " ")
@@ -811,7 +904,7 @@ fn parse_map_field(
               case num <= 0 {
                 True -> Error(InvalidFieldNumber(name, num_str))
                 False ->
-                  Ok(Field(name, Map(key_type, value_type), num, oneof_name))
+                  Ok(Field(name, Map(key_type, value_type), num, oneof_name, field_options))
               }
             }
             Error(_) -> Error(InvalidFieldNumber(name, num_str))
@@ -906,6 +999,7 @@ fn fix_field_types(fields: List(Field), enum_names: List(String)) -> List(Field)
       fix_proto_type(field.field_type, enum_names),
       field.number,
       field.oneof_name,
+      field.options,
     )
   })
 }

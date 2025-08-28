@@ -69,9 +69,10 @@ message TestMessage {
           fields: [
             parser.Field(
               name: "name",
-              number: 1,
               field_type: parser.String,
+              number: 1,
               oneof_name: option.None,
+              options: [],
             ),
           ],
           nested_messages: [],

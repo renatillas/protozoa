@@ -3,6 +3,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
+import protozoa/internal/well_known_types
 import protozoa/parser.{type Enum, type Message, type ProtoFile, type ProtoType}
 
 /// A registry to hold all message and enum types across multiple proto files,
@@ -31,14 +32,29 @@ pub fn describe_error(error: Error) -> String {
   }
 }
 
-/// Create a new, empty TypeRegistry.
+/// Create a new TypeRegistry with well-known types pre-loaded.
 pub fn new() -> TypeRegistry {
-  TypeRegistry(
+  let registry = TypeRegistry(
     messages: dict.new(),
     enums: dict.new(),
     type_sources: dict.new(),
     file_packages: dict.new(),
   )
+  
+  // Pre-populate with well-known types
+  load_well_known_types(registry)
+}
+
+/// Load well-known types into the registry
+fn load_well_known_types(registry: TypeRegistry) -> TypeRegistry {
+  let well_known_files = well_known_types.get_well_known_proto_files()
+  
+  dict.fold(well_known_files, registry, fn(acc, file_path, proto_file) {
+    case add_file(acc, file_path, proto_file) {
+      Ok(updated_registry) -> updated_registry
+      Error(_) -> acc  // Ignore errors when loading well-known types
+    }
+  })
 }
 
 /// Add types from a single ProtoFile to the TypeRegistry.

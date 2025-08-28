@@ -6,7 +6,7 @@
 import gleam/int
 import gleam/list
 import gleam/string
-import protozoa/internal/codegen/types
+import protozoa/internal/codegen/types.{capitalize_first, flatten_type_name}
 import protozoa/internal/type_registry.{type TypeRegistry}
 import protozoa/parser.{type Field, type Message, type ProtoType}
 
@@ -653,21 +653,6 @@ fn is_nested_enum_in_message(enum_name: String, parent_message: Message) -> Bool
   |> list.any(fn(nested_enum) { nested_enum.name == enum_name })
 }
 
-fn flatten_type_name(name: String) -> String {
-  // Handle well-known types
-  case name {
-    "google.protobuf.Timestamp" -> "Timestamp"
-    "google.protobuf.Duration" -> "Duration"
-    "google.protobuf.FieldMask" -> "FieldMask"
-    "google.protobuf.Empty" -> "Empty"
-    "google.protobuf.Any" -> "Any"
-    _ -> {
-      // Convert dotted names like "OuterMessage.NestedMessage" to "OuterMessageNestedMessage"
-      name
-      |> string.replace(".", "")
-    }
-  }
-}
 
 fn get_type_name(proto_type: ProtoType) -> String {
   case proto_type {
@@ -677,15 +662,3 @@ fn get_type_name(proto_type: ProtoType) -> String {
   }
 }
 
-fn capitalize_first(str: String) -> String {
-  // Convert snake_case to PascalCase
-  str
-  |> string.split("_")
-  |> list.map(fn(part) {
-    case string.pop_grapheme(part) {
-      Ok(#(first, rest)) -> string.uppercase(first) <> rest
-      Error(_) -> part
-    }
-  })
-  |> string.join("")
-}

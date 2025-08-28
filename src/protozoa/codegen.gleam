@@ -138,10 +138,13 @@ fn determine_needed_imports(proto_file: ProtoFile) -> List(String) {
   }
 
   // Add option import if we have oneofs or optional fields
-  let needs_option = has_oneofs(proto_file) || has_optional_fields(proto_file)
-  let imports = case needs_option {
-    True -> ["import gleam/option.{type Option, None, Some}", ..imports]
-    False -> imports
+  let has_optional = has_optional_fields(proto_file)
+  let has_oneof = has_oneofs(proto_file)
+  let imports = case has_optional, has_oneof {
+    True, True -> ["import gleam/option.{type Option, None, Some}", ..imports]
+    True, False -> ["import gleam/option.{type Option, None, Some}", ..imports]
+    False, True -> ["import gleam/option.{None, Some}", ..imports]
+    False, False -> imports
   }
 
   // Add dict import if we have oneofs (for oneof decoders)
@@ -361,6 +364,7 @@ fn generate_well_known_type_definition(type_name: String) -> String {
     "google.protobuf.Duration" -> generate_duration_definition()
     "google.protobuf.FieldMask" -> generate_fieldmask_definition()
     "google.protobuf.Empty" -> generate_empty_definition()
+    "google.protobuf.Any" -> generate_any_definition()
     _ -> ""
   }
 }
@@ -448,6 +452,31 @@ fn generate_empty_definition() -> String {
     "",
     "pub fn empty_decoder() -> decode.Decoder(Empty) {",
     "  decode.success(Empty)",
+    "}",
+  ]
+  string.join(lines, "\n")
+}
+
+fn generate_any_definition() -> String {
+  let lines = [
+    "pub type Any {",
+    "  Any(",
+    "    type_url: String,",
+    "    value: BitArray,",
+    "  )",
+    "}",
+    "",
+    "pub fn encode_any(any: Any) -> BitArray {",
+    "  encode.message([",
+    "    encode.string_field(1, any.type_url),",
+    "    encode.field(2, wire.LengthDelimited, encode.length_delimited(any.value)),",
+    "  ])",
+    "}",
+    "",
+    "pub fn any_decoder() -> decode.Decoder(Any) {",
+    "  use type_url <- decode.then(decode.string_with_default(1, \"\"))",
+    "  use value <- decode.then(decode.bytes(2))",
+    "  decode.success(Any(type_url: type_url, value: value))",
     "}",
   ]
   string.join(lines, "\n")

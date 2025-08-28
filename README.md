@@ -189,17 +189,18 @@ pub fn decode_user(data: BitArray) -> Result(User, List(decode.DecodeError)) {
 ### High Priority
 These features are essential for broader ecosystem compatibility:
 
-- [ ] **Well-known types** - Google's standard protobuf types
-  - [ ] `google.protobuf.Timestamp`
-  - [ ] `google.protobuf.Duration`
-  - [ ] `google.protobuf.Any`
-  - [ ] `google.protobuf.Struct` / `Value`
-  - [ ] `google.protobuf.Empty`
-  - [ ] Wrapper types (`StringValue`, `Int32Value`, etc.)
-- [ ] **Field options** - Support field-level configuration
-  - [ ] `deprecated` option
-  - [ ] `json_name` option
-  - [ ] `packed` option declaration (encoding already works)
+- [x] **Well-known types** - Google's standard protobuf types ✅ COMPLETED
+  - [x] `google.protobuf.Timestamp` - Full support with auto-import resolution
+  - [x] `google.protobuf.Duration` - Full support with auto-import resolution
+  - [x] `google.protobuf.Any` - Full support with auto-import resolution
+  - [x] `google.protobuf.Struct` / `Value` - Full support with auto-import resolution
+  - [x] `google.protobuf.Empty` - Full support with auto-import resolution
+  - [x] Wrapper types (`StringValue`, `Int32Value`, etc.) - Full support with auto-import resolution
+  - [x] Full integration with import system and code generation
+- [x] **Field options** - Support field-level configuration ✅ COMPLETED  
+  - [x] `deprecated` option - Parsing and deprecation warnings in generated code
+  - [x] `json_name` option - Parsing support (ready for future JSON serialization)
+  - [x] `packed` option - Parsing support (encoding already works)
   - [ ] Custom field options
 
 ### Medium Priority

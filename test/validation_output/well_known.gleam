@@ -7,7 +7,7 @@
 
 import gleam/dict
 import gleam/list
-import gleam/option.{type Option, None, Some}
+import gleam/option.{None, Some}
 import protozoa/decode
 import protozoa/encode
 import protozoa/wire

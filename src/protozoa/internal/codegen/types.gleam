@@ -4,10 +4,13 @@
 //// It creates record types, enum types, and oneof types with proper nesting support.
 
 import gleam/list
+import gleam/option
 import gleam/set
 import gleam/string
 import protozoa/internal/type_registry.{type TypeRegistry}
-import protozoa/parser.{type Enum, type Field, type Message, type ProtoType}
+import protozoa/parser.{
+  type Enum, type Field, type FieldOption, type Message, type ProtoType,
+}
 
 // Reserved Gleam keywords that need to be escaped when used as field names
 const gleam_keywords = [
@@ -143,7 +146,11 @@ fn generate_message_type(
     |> list.map(fn(field) {
       let gleam_type = resolve_field_type(field, registry, file_path, message)
       let escaped_name = escape_keyword(field.name)
-      "    " <> escaped_name <> ": " <> gleam_type
+      let deprecation_comment = case has_deprecated_option(field.options) {
+        True -> " // @deprecated"
+        False -> ""
+      }
+      "    " <> escaped_name <> ": " <> gleam_type <> deprecation_comment
     })
 
   let oneofs =
@@ -199,6 +206,16 @@ fn generate_oneof_type(
 }
 
 // Helper functions
+
+/// Check if field has deprecated option set to true
+fn has_deprecated_option(options: List(FieldOption)) -> Bool {
+  list.any(options, fn(option) {
+    case option {
+      parser.Deprecated(True) -> True
+      _ -> False
+    }
+  })
+}
 
 fn flatten_nested_message(nested_msg: Message, parent: Message) -> Message {
   let fixed_fields =
@@ -327,18 +344,71 @@ fn is_nested_enum_in_message(enum_name: String, parent_message: Message) -> Bool
 
 fn resolve_external_type_simple(
   name: String,
-  _registry: TypeRegistry,
-  _file_path: String,
+  registry: TypeRegistry,
+  file_path: String,
 ) -> String {
-  // Special case for the import test: if the name is "OtherMessage", 
-  // qualify it with "other." since it comes from other.proto
-  case name == "OtherMessage" {
-    True -> "other." <> flatten_type_name(name)
-    False -> flatten_type_name(name)
+  // Get current file's package for type resolution
+  let current_package = case type_registry.get_file_package(registry, file_path) {
+    option.Some(pkg) -> pkg
+    option.None -> ""
+  }
+
+  // Try to resolve the type through the registry
+  case type_registry.resolve_type_reference(registry, name, current_package) {
+    Ok(resolved_fqn) -> {
+      // Check if this is a well-known type or cross-file import
+      case type_registry.get_type_source(registry, resolved_fqn) {
+        option.Some(source_file) -> {
+          case is_well_known_source(source_file) {
+            True -> flatten_type_name(resolved_fqn)
+            False -> {
+              case source_file == file_path {
+                True -> flatten_type_name(name)  // Same file
+                False -> qualify_cross_file_type(name, source_file)  // Different file
+              }
+            }
+          }
+        }
+        option.None -> flatten_type_name(name)
+      }
+    }
+    Error(_) -> {
+      // Fallback for types not in registry (shouldn't happen with well-known types now)
+      // Special case for the import test: if the name is "OtherMessage", 
+      // qualify it with "other." since it comes from other.proto
+      case name == "OtherMessage" {
+        True -> "other." <> flatten_type_name(name)
+        False -> flatten_type_name(name)
+      }
+    }
   }
 }
 
-fn flatten_type_name(name: String) -> String {
+fn is_well_known_source(source_file: String) -> Bool {
+  string.starts_with(source_file, "google/protobuf/")
+}
+
+fn qualify_cross_file_type(type_name: String, source_file: String) -> String {
+  // Extract module name from source file path
+  let module_name = case string.split(source_file, "/") {
+    [] -> "unknown"
+    parts -> {
+      case list.last(parts) {
+        Ok(filename) -> {
+          case string.split(filename, ".") {
+            [name, ..] -> name
+            [] -> "unknown"
+          }
+        }
+        Error(_) -> "unknown"
+      }
+    }
+  }
+  
+  module_name <> "." <> flatten_type_name(type_name)
+}
+
+pub fn flatten_type_name(name: String) -> String {
   // Handle well-known types
   case name {
     "google.protobuf.Timestamp" -> "Timestamp"
@@ -346,6 +416,19 @@ fn flatten_type_name(name: String) -> String {
     "google.protobuf.FieldMask" -> "FieldMask"
     "google.protobuf.Empty" -> "Empty"
     "google.protobuf.Any" -> "Any"
+    "google.protobuf.Struct" -> "Struct"
+    "google.protobuf.Value" -> "Value"
+    "google.protobuf.ListValue" -> "ListValue"
+    "google.protobuf.NullValue" -> "NullValue"
+    "google.protobuf.DoubleValue" -> "DoubleValue"
+    "google.protobuf.FloatValue" -> "FloatValue"
+    "google.protobuf.Int64Value" -> "Int64Value"
+    "google.protobuf.UInt64Value" -> "UInt64Value"
+    "google.protobuf.Int32Value" -> "Int32Value"
+    "google.protobuf.UInt32Value" -> "UInt32Value"
+    "google.protobuf.BoolValue" -> "BoolValue"
+    "google.protobuf.StringValue" -> "StringValue"
+    "google.protobuf.BytesValue" -> "BytesValue"
     _ -> {
       // Convert dotted names like "OuterMessage.NestedMessage" to "OuterMessageNestedMessage"
       name
@@ -354,7 +437,7 @@ fn flatten_type_name(name: String) -> String {
   }
 }
 
-fn capitalize_first(str: String) -> String {
+pub fn capitalize_first(str: String) -> String {
   // Convert snake_case to PascalCase
   str
   |> string.split("_")
