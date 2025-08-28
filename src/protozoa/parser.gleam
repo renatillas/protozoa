@@ -369,7 +369,8 @@ fn parse_items_helper(
                         string.contains(trimmed, "{")
                         || string.contains(trimmed, "}")
                       {
-                        True -> Error(InvalidSyntax(line, "unrecognized syntax"))
+                        True ->
+                          Error(InvalidSyntax(line, "unrecognized syntax"))
                         False -> parse_items_helper(rest, messages, enums)
                       }
                     }
@@ -785,7 +786,11 @@ fn parse_field_options(options_str: String) -> List(FieldOption) {
     _ -> {
       case string.starts_with(trimmed, "[") && string.ends_with(trimmed, "]") {
         True -> {
-          let content = trimmed |> string.drop_start(1) |> string.drop_end(1) |> string.trim()
+          let content =
+            trimmed
+            |> string.drop_start(1)
+            |> string.drop_end(1)
+            |> string.trim()
           case content {
             "" -> []
             _ -> parse_option_list(content)
@@ -808,11 +813,13 @@ fn parse_single_option(option_str: String) -> Result(FieldOption, Nil) {
   case string.split(option_str, "=") {
     ["deprecated", "true"] -> Ok(Deprecated(True))
     ["deprecated", "false"] -> Ok(Deprecated(False))
-    ["packed", "true"] -> Ok(Packed(True))  
+    ["packed", "true"] -> Ok(Packed(True))
     ["packed", "false"] -> Ok(Packed(False))
     ["json_name", value] -> {
       // Remove quotes from json_name value
-      let clean_value = case string.starts_with(value, "\"") && string.ends_with(value, "\"") {
+      let clean_value = case
+        string.starts_with(value, "\"") && string.ends_with(value, "\"")
+      {
         True -> value |> string.drop_start(1) |> string.drop_end(1)
         False -> value
       }
@@ -833,20 +840,24 @@ fn parse_field(
   }
 
   // Extract field options if present
-  let #(line_without_options, field_options) = case string.split_once(clean_line, "[") {
+  let #(line_without_options, field_options) = case
+    string.split_once(clean_line, "[")
+  {
     Ok(#(before, after)) -> {
       case string.split_once(after, "]") {
         Ok(#(options_content, remaining)) -> {
           let options = parse_field_options("[" <> options_content <> "]")
           // Remove semicolon from remaining part if present
-          let cleaned_remaining = string.trim(remaining) |> string.replace(";", "")
+          let cleaned_remaining =
+            string.trim(remaining) |> string.replace(";", "")
           let cleaned_line = case cleaned_remaining {
             "" -> string.trim(before)
             _ -> string.trim(before) <> " " <> cleaned_remaining
           }
           #(cleaned_line, options)
         }
-        Error(_) -> #(clean_line, [])  // Malformed options, ignore
+        Error(_) -> #(clean_line, [])
+        // Malformed options, ignore
       }
     }
     Error(_) -> #(clean_line, [])
@@ -859,7 +870,13 @@ fn parse_field(
           case num <= 0 {
             True -> Error(InvalidFieldNumber(name, num_str))
             False ->
-              Ok(Field(name, Repeated(parse_type(type_str)), num, oneof_name, field_options))
+              Ok(Field(
+                name,
+                Repeated(parse_type(type_str)),
+                num,
+                oneof_name,
+                field_options,
+              ))
           }
         }
         None -> Error(InvalidFieldNumber(name, num_str))
@@ -871,7 +888,13 @@ fn parse_field(
           case num <= 0 {
             True -> Error(InvalidFieldNumber(name, num_str))
             False ->
-              Ok(Field(name, Optional(parse_type(type_str)), num, oneof_name, field_options))
+              Ok(Field(
+                name,
+                Optional(parse_type(type_str)),
+                num,
+                oneof_name,
+                field_options,
+              ))
           }
         }
         None -> Error(InvalidFieldNumber(name, num_str))
@@ -882,7 +905,14 @@ fn parse_field(
         Some(num) -> {
           case num <= 0 {
             True -> Error(InvalidFieldNumber(name, num_str))
-            False -> Ok(Field(name, parse_type(type_str), num, oneof_name, field_options))
+            False ->
+              Ok(Field(
+                name,
+                parse_type(type_str),
+                num,
+                oneof_name,
+                field_options,
+              ))
           }
         }
         None -> Error(InvalidFieldNumber(name, num_str))
@@ -897,13 +927,16 @@ fn parse_map_field(
   oneof_name: Option(String),
 ) -> Result(Field, ParseError) {
   // Extract field options if present
-  let #(line_without_options, field_options) = case string.split_once(clean_line, "[") {
+  let #(line_without_options, field_options) = case
+    string.split_once(clean_line, "[")
+  {
     Ok(#(before, after)) -> {
       case string.split_once(after, "]") {
         Ok(#(options_content, remaining)) -> {
           let options = parse_field_options("[" <> options_content <> "]")
           // Remove semicolon from remaining part if present
-          let cleaned_remaining = string.trim(remaining) |> string.replace(";", "")
+          let cleaned_remaining =
+            string.trim(remaining) |> string.replace(";", "")
           let cleaned_line = case cleaned_remaining {
             "" -> string.trim(before)
             _ -> string.trim(before) <> " " <> cleaned_remaining
@@ -933,7 +966,13 @@ fn parse_map_field(
               case num <= 0 {
                 True -> Error(InvalidFieldNumber(name, num_str))
                 False ->
-                  Ok(Field(name, Map(key_type, value_type), num, oneof_name, field_options))
+                  Ok(Field(
+                    name,
+                    Map(key_type, value_type),
+                    num,
+                    oneof_name,
+                    field_options,
+                  ))
               }
             }
             Error(_) -> Error(InvalidFieldNumber(name, num_str))
@@ -1051,12 +1090,12 @@ fn fix_proto_type(proto_type: ProtoType, enum_names: List(String)) -> ProtoType 
 
 /// Parse all services from proto file lines
 fn parse_services(lines: List(String)) -> Result(List(Service), ParseError) {
-  let service_lines = 
+  let service_lines =
     list.filter(lines, fn(line) {
       let trimmed = string.trim(line)
       string.starts_with(trimmed, "service ")
     })
-  
+
   case service_lines {
     [] -> Ok([])
     _ -> {
@@ -1067,7 +1106,10 @@ fn parse_services(lines: List(String)) -> Result(List(Service), ParseError) {
 }
 
 /// Parse individual service blocks from proto lines
-fn parse_service_blocks(lines: List(String), services: List(Service)) -> Result(List(Service), ParseError) {
+fn parse_service_blocks(
+  lines: List(String),
+  services: List(Service),
+) -> Result(List(Service), ParseError) {
   case lines {
     [] -> Ok(list.reverse(services))
     [line, ..rest] -> {
@@ -1098,7 +1140,8 @@ fn parse_service_blocks(lines: List(String), services: List(Service)) -> Result(
                       let #(body, remaining) = extract_body(rest2, [], 0)
                       case parse_service_methods(body) {
                         Ok(methods) -> {
-                          let service = Service(name: service_name, methods: methods)
+                          let service =
+                            Service(name: service_name, methods: methods)
                           parse_service_blocks(remaining, [service, ..services])
                         }
                         Error(err) -> Error(err)
@@ -1120,20 +1163,22 @@ fn parse_service_blocks(lines: List(String), services: List(Service)) -> Result(
 }
 
 /// Parse methods within a service body
-fn parse_service_methods(body_lines: List(String)) -> Result(List(Method), ParseError) {
-  let method_lines = 
+fn parse_service_methods(
+  body_lines: List(String),
+) -> Result(List(Method), ParseError) {
+  let method_lines =
     list.filter(body_lines, fn(line) {
       let trimmed = string.trim(line)
       string.starts_with(trimmed, "rpc ")
     })
-  
+
   list.try_map(method_lines, parse_single_method)
 }
 
 /// Parse a single RPC method definition
 fn parse_single_method(line: String) -> Result(Method, ParseError) {
   let trimmed = string.trim(line) |> string.replace(";", "")
-  
+
   // Handle: rpc MethodName(InputType) returns (OutputType);
   case string.split(trimmed, " ") {
     ["rpc", ..rest_parts] -> {
@@ -1157,12 +1202,14 @@ fn parse_single_method(line: String) -> Result(Method, ParseError) {
 }
 
 /// Parse method signature to extract types and streaming info
-fn parse_method_signature(signature: String) -> Result(#(String, String, String, Bool, Bool), Nil) {
+fn parse_method_signature(
+  signature: String,
+) -> Result(#(String, String, String, Bool, Bool), Nil) {
   // Extract method name
   case string.split_once(signature, "(") {
     Ok(#(method_name, rest)) -> {
       let name = string.trim(method_name)
-      
+
       // Find the input type
       case string.split_once(rest, ")") {
         Ok(#(input_part, after_input)) -> {
@@ -1172,7 +1219,7 @@ fn parse_method_signature(signature: String) -> Result(#(String, String, String,
             True -> string.drop_start(input_type, 7) |> string.trim()
             False -> input_type
           }
-          
+
           // Find "returns" and output type
           case string.split_once(after_input, "returns") {
             Ok(#(_, returns_part)) -> {
@@ -1181,13 +1228,21 @@ fn parse_method_signature(signature: String) -> Result(#(String, String, String,
                   case string.split_once(output_part, ")") {
                     Ok(#(output_type, _)) -> {
                       let output_type = string.trim(output_type)
-                      let server_streaming = string.starts_with(output_type, "stream ")
+                      let server_streaming =
+                        string.starts_with(output_type, "stream ")
                       let clean_output = case server_streaming {
-                        True -> string.drop_start(output_type, 7) |> string.trim()
+                        True ->
+                          string.drop_start(output_type, 7) |> string.trim()
                         False -> output_type
                       }
-                      
-                      Ok(#(name, clean_input, clean_output, client_streaming, server_streaming))
+
+                      Ok(#(
+                        name,
+                        clean_input,
+                        clean_output,
+                        client_streaming,
+                        server_streaming,
+                      ))
                     }
                     Error(_) -> Error(Nil)
                   }

@@ -256,8 +256,6 @@ fn get_field_decoder_for_type(field_type: parser.ProtoType) -> String {
   }
 }
 
-
-
 fn generate_decoder_function_body(message: Message) -> String {
   let field_decoders =
     message.fields
@@ -490,4 +488,3 @@ fn collect_nested_messages_flattened(
     [flattened_msg, ..list.append(deeper_nested, acc)]
   })
 }
-

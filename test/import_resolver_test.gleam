@@ -573,38 +573,38 @@ service UserService {
 }"
 
   let assert Ok(parsed) = parser.parse(service_proto)
-  
+
   // Should have one service
   assert 1 == list.length(parsed.services)
-  
+
   let assert [service] = parsed.services
   assert "UserService" == service.name
   assert 4 == list.length(service.methods)
-  
+
   // Check each method
   let assert [get_user, stream_users, upload_data, chat] = service.methods
-  
+
   // GetUser - simple unary
   assert "GetUser" == get_user.name
   assert "GetUserRequest" == get_user.input_type
   assert "GetUserResponse" == get_user.output_type
   assert False == get_user.client_streaming
   assert False == get_user.server_streaming
-  
+
   // StreamUsers - server streaming
   assert "StreamUsers" == stream_users.name
   assert "GetUserRequest" == stream_users.input_type
   assert "GetUserResponse" == stream_users.output_type
   assert False == stream_users.client_streaming
   assert True == stream_users.server_streaming
-  
+
   // UploadData - client streaming
   assert "UploadData" == upload_data.name
   assert "GetUserRequest" == upload_data.input_type
   assert "GetUserResponse" == upload_data.output_type
   assert True == upload_data.client_streaming
   assert False == upload_data.server_streaming
-  
+
   // Chat - bidirectional streaming
   assert "Chat" == chat.name
   assert "GetUserRequest" == chat.input_type
@@ -634,7 +634,8 @@ service TestService {
   let assert Ok(_) = simplifile.write("test_service.proto", service_proto)
 
   let assert Ok(#(_, updated_resolver)) =
-    import_resolver.new() |> import_resolver.resolve_imports("test_service.proto")
+    import_resolver.new()
+    |> import_resolver.resolve_imports("test_service.proto")
 
   let files = import_resolver.get_all_loaded_files(updated_resolver)
   let registry = import_resolver.get_type_registry(updated_resolver)
@@ -656,7 +657,7 @@ service TestService {
 
   // Check that the generated file contains service stubs
   let assert [#(generated_path, generated_content)] = generated_files
-  
+
   // Should contain service client/server types
   assert True == string.contains(generated_content, "TestServiceClient")
   assert True == string.contains(generated_content, "TestServiceServer")

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
 - **Service/RPC Support** - Complete implementation of Protocol Buffer services
   - Added `Service` and `Method` types to parser
   - Full parsing support for service definitions with RPC methods
@@ -30,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Seamless integration with import system and code generation
 
 ### Changed
+
 - **Parser Documentation** - Updated to reflect new capabilities
   - Added service definitions to supported proto3 features
   - Updated capability descriptions to include field options and streaming
@@ -43,12 +45,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Service stubs include TODO placeholders for implementation
 
 ### Fixed
+
 - **Service Block Parsing** - Proper handling of service definitions
   - Service blocks are now correctly skipped in message/enum parsing
   - Fixed method signature parsing to handle multiple space-separated parts
   - Improved error handling for malformed service definitions
 
 ### Technical Details
+
 - **Test Coverage**: 139 tests (increased from 137) with comprehensive service testing
 - **Streaming Support**: All 4 streaming modes fully supported
   - Unary: `rpc Method(Request) returns (Response)`
@@ -60,6 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.0] - Initial Release
 
 ### Added
+
 - **Core Protocol Buffer Support**
   - Complete proto3 syntax parsing
   - Message and enum definitions
@@ -97,6 +102,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Efficient bit array operations
 
 ### Technical Specifications
+
 - **Language**: Gleam with Erlang runtime
 - **Proto Version**: proto3 only
 - **Test Coverage**: 137 comprehensive tests
@@ -108,15 +114,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Future Roadmap
 
 ### High Priority
+
 - **Proto2 Support** - Required/optional semantics, default values, extensions
 - **JSON Support** - JSON encoding/decoding per proto3 JSON mapping
 - **Unknown Field Handling** - Preserve unknown fields during decode/encode
 
 ### Medium Priority  
+
 - **File Options** - Support for `java_package`, `optimize_for`, `go_package`
 - **Recursive Messages** - Enhanced self-referential message support
 - **Advanced Parsing** - Comment preservation, source locations, better errors
 
 ### Low Priority
+
 - **Performance Optimizations** - Lazy decoding, streaming for large messages
 - **Extended Validation** - Enhanced semantic validation and error reporting
+

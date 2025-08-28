@@ -348,7 +348,9 @@ fn resolve_external_type_simple(
   file_path: String,
 ) -> String {
   // Get current file's package for type resolution
-  let current_package = case type_registry.get_file_package(registry, file_path) {
+  let current_package = case
+    type_registry.get_file_package(registry, file_path)
+  {
     option.Some(pkg) -> pkg
     option.None -> ""
   }
@@ -363,8 +365,10 @@ fn resolve_external_type_simple(
             True -> flatten_type_name(resolved_fqn)
             False -> {
               case source_file == file_path {
-                True -> flatten_type_name(name)  // Same file
-                False -> qualify_cross_file_type(name, source_file)  // Different file
+                True -> flatten_type_name(name)
+                // Same file
+                False -> qualify_cross_file_type(name, source_file)
+                // Different file
               }
             }
           }
@@ -404,7 +408,7 @@ fn qualify_cross_file_type(type_name: String, source_file: String) -> String {
       }
     }
   }
-  
+
   module_name <> "." <> flatten_type_name(type_name)
 }
 

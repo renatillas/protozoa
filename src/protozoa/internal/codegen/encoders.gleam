@@ -653,7 +653,6 @@ fn is_nested_enum_in_message(enum_name: String, parent_message: Message) -> Bool
   |> list.any(fn(nested_enum) { nested_enum.name == enum_name })
 }
 
-
 fn get_type_name(proto_type: ProtoType) -> String {
   case proto_type {
     parser.MessageType(name) -> name
@@ -661,4 +660,3 @@ fn get_type_name(proto_type: ProtoType) -> String {
     _ -> "UnknownType"
   }
 }
-
