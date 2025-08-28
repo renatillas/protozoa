@@ -206,11 +206,11 @@ These features are essential for broader ecosystem compatibility:
 ### Medium Priority
 Important for feature completeness and broader compatibility:
 
-- [ ] **Services/RPC** - Support for service definitions
-  - [ ] Service definition parsing
-  - [ ] Method definitions
-  - [ ] Code generation for service stubs
-  - [ ] Streaming support (client/server/bidirectional)
+- ✅ **Services/RPC** - Support for service definitions
+  - ✅ Service definition parsing
+  - ✅ Method definitions
+  - ✅ Code generation for service stubs
+  - ✅ Streaming support detection (client/server/bidirectional)
 - [ ] **Proto2 support** - Full proto2 compatibility
   - [ ] Required/optional field semantics
   - [ ] Default values

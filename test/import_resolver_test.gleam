@@ -81,6 +81,7 @@ message TestMessage {
         ),
       ],
       enums: [],
+      services: [],
     ),
     import_resolver,
   )) = import_resolver.new() |> import_resolver.resolve_imports(file_path)
@@ -546,5 +547,124 @@ message AppMessage {
   let _ = simplifile.delete("./test_output/base.gleam")
   let _ = simplifile.delete("./test_output/app.gleam")
   let _ = simplifile.clear_directory("./test_output")
+  Nil
+}
+
+// Test service definition parsing
+pub fn service_parsing_test() {
+  let service_proto =
+    "syntax = \"proto3\";
+package testservice;
+
+message GetUserRequest {
+  string user_id = 1;
+}
+
+message GetUserResponse {
+  string name = 1;
+  string email = 2;
+}
+
+service UserService {
+  rpc GetUser(GetUserRequest) returns (GetUserResponse);
+  rpc StreamUsers(GetUserRequest) returns (stream GetUserResponse);
+  rpc UploadData(stream GetUserRequest) returns (GetUserResponse);
+  rpc Chat(stream GetUserRequest) returns (stream GetUserResponse);
+}"
+
+  let assert Ok(parsed) = parser.parse(service_proto)
+  
+  // Should have one service
+  assert 1 == list.length(parsed.services)
+  
+  let assert [service] = parsed.services
+  assert "UserService" == service.name
+  assert 4 == list.length(service.methods)
+  
+  // Check each method
+  let assert [get_user, stream_users, upload_data, chat] = service.methods
+  
+  // GetUser - simple unary
+  assert "GetUser" == get_user.name
+  assert "GetUserRequest" == get_user.input_type
+  assert "GetUserResponse" == get_user.output_type
+  assert False == get_user.client_streaming
+  assert False == get_user.server_streaming
+  
+  // StreamUsers - server streaming
+  assert "StreamUsers" == stream_users.name
+  assert "GetUserRequest" == stream_users.input_type
+  assert "GetUserResponse" == stream_users.output_type
+  assert False == stream_users.client_streaming
+  assert True == stream_users.server_streaming
+  
+  // UploadData - client streaming
+  assert "UploadData" == upload_data.name
+  assert "GetUserRequest" == upload_data.input_type
+  assert "GetUserResponse" == upload_data.output_type
+  assert True == upload_data.client_streaming
+  assert False == upload_data.server_streaming
+  
+  // Chat - bidirectional streaming
+  assert "Chat" == chat.name
+  assert "GetUserRequest" == chat.input_type
+  assert "GetUserResponse" == chat.output_type
+  assert True == chat.client_streaming
+  assert True == chat.server_streaming
+}
+
+// Test service code generation
+pub fn service_code_generation_test() {
+  let service_proto =
+    "syntax = \"proto3\";
+package testservice;
+
+message Request {
+  string data = 1;
+}
+
+message Response {
+  string result = 1;
+}
+
+service TestService {
+  rpc Process(Request) returns (Response);
+}"
+
+  let assert Ok(_) = simplifile.write("test_service.proto", service_proto)
+
+  let assert Ok(#(_, updated_resolver)) =
+    import_resolver.new() |> import_resolver.resolve_imports("test_service.proto")
+
+  let files = import_resolver.get_all_loaded_files(updated_resolver)
+  let registry = import_resolver.get_type_registry(updated_resolver)
+
+  // Convert to Path type for codegen
+  let paths =
+    list.map(files, fn(entry) {
+      let #(path, content) = entry
+      parser.Path(path, content)
+    })
+
+  // Test that code generation works with services
+  let _ = simplifile.create_directory_all("./test_service_output")
+  let assert Ok(generated_files) =
+    codegen.generate_with_imports(paths, registry, "./test_service_output")
+
+  // Should generate one file
+  assert 1 == list.length(generated_files)
+
+  // Check that the generated file contains service stubs
+  let assert [#(generated_path, generated_content)] = generated_files
+  
+  // Should contain service client/server types
+  assert True == string.contains(generated_content, "TestServiceClient")
+  assert True == string.contains(generated_content, "TestServiceServer")
+  assert True == string.contains(generated_content, "// Service: TestService")
+
+  // Cleanup
+  let _ = simplifile.delete("test_service.proto")
+  let _ = simplifile.delete(generated_path)
+  let _ = simplifile.clear_directory("./test_service_output")
   Nil
 }

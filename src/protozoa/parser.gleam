@@ -6,9 +6,10 @@
 ////
 //// ## Capabilities
 ////
-//// - **Full proto3 syntax support**: Messages, enums, fields, imports, packages
+//// - **Full proto3 syntax support**: Messages, enums, services, fields, imports, packages
 //// - **Nested structures**: Supports nested messages and enums within messages  
-//// - **Advanced features**: Oneofs, maps, repeated fields, optional fields
+//// - **Advanced features**: Oneofs, maps, repeated fields, optional fields, field options
+//// - **Service definitions**: Parses RPC services with method definitions and streaming support
 //// - **Import handling**: Parses import statements (public, weak, regular)
 //// - **Robust parsing**: Handles comments, whitespace, and malformed input gracefully
 //// - **Type definitions**: Comprehensive type system covering all proto3 types
@@ -27,6 +28,9 @@
 //// - Oneof groups for union types
 //// - Repeated fields for arrays/lists
 //// - Map fields for key-value pairs
+//// - Service definitions with RPC methods
+//// - Streaming RPC support (client, server, bidirectional)
+//// - Field options (deprecated, json_name, packed)
 //// - Import statements with search path resolution
 //// - Package declarations for namespacing
 //// - Field numbers and naming
@@ -161,6 +165,22 @@ pub type Import {
   Import(path: String, public: Bool, weak: Bool)
 }
 
+/// Represents an RPC method in a Protocol Buffer service.
+pub type Method {
+  Method(
+    name: String,
+    input_type: String,
+    output_type: String,
+    client_streaming: Bool,
+    server_streaming: Bool,
+  )
+}
+
+/// Represents a Protocol Buffer service definition.
+pub type Service {
+  Service(name: String, methods: List(Method))
+}
+
 /// Represents a parsed Protocol Buffer file.
 pub type ProtoFile {
   ProtoFile(
@@ -169,6 +189,7 @@ pub type ProtoFile {
     imports: List(Import),
     messages: List(Message),
     enums: List(Enum),
+    services: List(Service),
   )
 }
 
@@ -177,8 +198,6 @@ pub type ProtoFile {
 /// 
 /// ## Limitations
 /// - Only supports proto3 syntax
-/// - Does not support imports
-/// - Does not support services
 /// - Limited support for nested types
 /// 
 /// ## Examples
@@ -202,6 +221,7 @@ pub fn parse(content: String) -> Result(ProtoFile, ParseError) {
       let package = find_package(lines)
       use imports <- result.try(find_imports(lines))
       use #(messages, enums) <- result.try(parse_items(lines))
+      use services <- result.try(parse_services(lines))
 
       // Validate messages have at least some content or are explicitly empty
       use validated_messages <- result.try(validate_messages(messages))
@@ -219,7 +239,7 @@ pub fn parse(content: String) -> Result(ProtoFile, ParseError) {
           )
         })
 
-      Ok(ProtoFile(syntax:, package:, messages:, enums:, imports:))
+      Ok(ProtoFile(syntax:, package:, messages:, enums:, imports:, services:))
     }
   }
 }
@@ -331,19 +351,28 @@ fn parse_items_helper(
               }
             }
             False -> {
-              // Check if this line contains unrecognized syntax that should be an error
-              let trimmed = string.trim(line)
-              case trimmed {
-                "" -> parse_items_helper(rest, messages, enums)
-                _ -> {
-                  // Skip lines that might be valid proto syntax we don't recognize
-                  // but catch obvious errors
-                  case
-                    string.contains(trimmed, "{")
-                    || string.contains(trimmed, "}")
-                  {
-                    True -> Error(InvalidSyntax(line, "unrecognized syntax"))
-                    False -> parse_items_helper(rest, messages, enums)
+              case string.starts_with(line, "service ") {
+                True -> {
+                  // Skip service blocks - they're parsed separately
+                  let #(_, remaining) = extract_body(rest, [], 0)
+                  parse_items_helper(remaining, messages, enums)
+                }
+                False -> {
+                  // Check if this line contains unrecognized syntax that should be an error
+                  let trimmed = string.trim(line)
+                  case trimmed {
+                    "" -> parse_items_helper(rest, messages, enums)
+                    _ -> {
+                      // Skip lines that might be valid proto syntax we don't recognize
+                      // but catch obvious errors
+                      case
+                        string.contains(trimmed, "{")
+                        || string.contains(trimmed, "}")
+                      {
+                        True -> Error(InvalidSyntax(line, "unrecognized syntax"))
+                        False -> parse_items_helper(rest, messages, enums)
+                      }
+                    }
                   }
                 }
               }
@@ -1017,5 +1046,161 @@ fn fix_proto_type(proto_type: ProtoType, enum_names: List(String)) -> ProtoType 
     Map(key, value) ->
       Map(fix_proto_type(key, enum_names), fix_proto_type(value, enum_names))
     other -> other
+  }
+}
+
+/// Parse all services from proto file lines
+fn parse_services(lines: List(String)) -> Result(List(Service), ParseError) {
+  let service_lines = 
+    list.filter(lines, fn(line) {
+      let trimmed = string.trim(line)
+      string.starts_with(trimmed, "service ")
+    })
+  
+  case service_lines {
+    [] -> Ok([])
+    _ -> {
+      // Extract service blocks and parse them
+      parse_service_blocks(lines, [])
+    }
+  }
+}
+
+/// Parse individual service blocks from proto lines
+fn parse_service_blocks(lines: List(String), services: List(Service)) -> Result(List(Service), ParseError) {
+  case lines {
+    [] -> Ok(list.reverse(services))
+    [line, ..rest] -> {
+      let trimmed = string.trim(line)
+      case string.starts_with(trimmed, "service ") {
+        True -> {
+          // Extract service name
+          case string.split(trimmed, " ") {
+            ["service", name, "{"] -> {
+              let service_name = string.trim(name) |> string.replace("{", "")
+              // Extract service body
+              let #(body, remaining) = extract_body(rest, [], 0)
+              case parse_service_methods(body) {
+                Ok(methods) -> {
+                  let service = Service(name: service_name, methods: methods)
+                  parse_service_blocks(remaining, [service, ..services])
+                }
+                Error(err) -> Error(err)
+              }
+            }
+            ["service", name] -> {
+              let service_name = string.trim(name)
+              // Service definition continues on next line with opening brace
+              case rest {
+                [brace_line, ..rest2] -> {
+                  case string.trim(brace_line) {
+                    "{" -> {
+                      let #(body, remaining) = extract_body(rest2, [], 0)
+                      case parse_service_methods(body) {
+                        Ok(methods) -> {
+                          let service = Service(name: service_name, methods: methods)
+                          parse_service_blocks(remaining, [service, ..services])
+                        }
+                        Error(err) -> Error(err)
+                      }
+                    }
+                    _ -> Error(MalformedMessage(line))
+                  }
+                }
+                [] -> Error(MalformedMessage(line))
+              }
+            }
+            _ -> Error(MalformedMessage(line))
+          }
+        }
+        False -> parse_service_blocks(rest, services)
+      }
+    }
+  }
+}
+
+/// Parse methods within a service body
+fn parse_service_methods(body_lines: List(String)) -> Result(List(Method), ParseError) {
+  let method_lines = 
+    list.filter(body_lines, fn(line) {
+      let trimmed = string.trim(line)
+      string.starts_with(trimmed, "rpc ")
+    })
+  
+  list.try_map(method_lines, parse_single_method)
+}
+
+/// Parse a single RPC method definition
+fn parse_single_method(line: String) -> Result(Method, ParseError) {
+  let trimmed = string.trim(line) |> string.replace(";", "")
+  
+  // Handle: rpc MethodName(InputType) returns (OutputType);
+  case string.split(trimmed, " ") {
+    ["rpc", ..rest_parts] -> {
+      // Reconstruct the method signature without "rpc"
+      let combined = string.join(rest_parts, " ")
+      case parse_method_signature(combined) {
+        Ok(#(name, input_type, output_type, client_streaming, server_streaming)) -> {
+          Ok(Method(
+            name: name,
+            input_type: input_type,
+            output_type: output_type,
+            client_streaming: client_streaming,
+            server_streaming: server_streaming,
+          ))
+        }
+        Error(_) -> Error(MalformedField(line))
+      }
+    }
+    _ -> Error(MalformedField(line))
+  }
+}
+
+/// Parse method signature to extract types and streaming info
+fn parse_method_signature(signature: String) -> Result(#(String, String, String, Bool, Bool), Nil) {
+  // Extract method name
+  case string.split_once(signature, "(") {
+    Ok(#(method_name, rest)) -> {
+      let name = string.trim(method_name)
+      
+      // Find the input type
+      case string.split_once(rest, ")") {
+        Ok(#(input_part, after_input)) -> {
+          let input_type = string.trim(input_part)
+          let client_streaming = string.starts_with(input_type, "stream ")
+          let clean_input = case client_streaming {
+            True -> string.drop_start(input_type, 7) |> string.trim()
+            False -> input_type
+          }
+          
+          // Find "returns" and output type
+          case string.split_once(after_input, "returns") {
+            Ok(#(_, returns_part)) -> {
+              case string.split_once(returns_part, "(") {
+                Ok(#(_, output_part)) -> {
+                  case string.split_once(output_part, ")") {
+                    Ok(#(output_type, _)) -> {
+                      let output_type = string.trim(output_type)
+                      let server_streaming = string.starts_with(output_type, "stream ")
+                      let clean_output = case server_streaming {
+                        True -> string.drop_start(output_type, 7) |> string.trim()
+                        False -> output_type
+                      }
+                      
+                      Ok(#(name, clean_input, clean_output, client_streaming, server_streaming))
+                    }
+                    Error(_) -> Error(Nil)
+                  }
+                }
+                Error(_) -> Error(Nil)
+              }
+            }
+            Error(_) -> Error(Nil)
+          }
+        }
+        Error(_) -> Error(Nil)
+      }
+    }
+    Error(_) -> Error(Nil)
   }
 }

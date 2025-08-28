@@ -80,6 +80,8 @@ fn generate_file_with_imports(
       proto_file.messages,
     )
 
+  let service_stubs = generate_service_stubs(proto_file.services)
+
   // Combine all sections with proper spacing
   let sections =
     [
@@ -91,6 +93,7 @@ fn generate_file_with_imports(
       message_encoders,
       message_decoders,
       enum_helpers,
+      service_stubs,
     ]
     |> list.filter(fn(section) { !string.is_empty(section) })
 
@@ -480,4 +483,137 @@ fn generate_any_definition() -> String {
     "}",
   ]
   string.join(lines, "\n")
+}
+
+/// Generate service stub definitions for gRPC/HTTP services
+fn generate_service_stubs(services: List(parser.Service)) -> String {
+  case services {
+    [] -> ""
+    _ -> {
+      services
+      |> list.map(generate_single_service_stub)
+      |> string.join("\n\n")
+    }
+  }
+}
+
+/// Generate stub for a single service
+fn generate_single_service_stub(service: parser.Service) -> String {
+  let client_interface = generate_client_interface(service)
+  let server_interface = generate_server_interface(service)
+
+  string.join(
+    [
+      "// Service: " <> service.name,
+      "",
+      client_interface,
+      "",
+      server_interface,
+    ],
+    "\n",
+  )
+}
+
+/// Generate client interface for service
+fn generate_client_interface(service: parser.Service) -> String {
+  let type_name = service.name <> "Client"
+  let method_comments = generate_method_comments(service.methods, "client")
+
+  string.join(
+    [
+      "/// Client interface for " <> service.name <> " service",
+      "/// This trait defines the client-side methods for calling the service",
+      "pub type " <> type_name <> " {",
+      "  " <> type_name <> "(",
+      "    // TODO: Add client implementation fields (e.g., HTTP client, endpoint URL)",
+      "    endpoint: String,",
+      "  )",
+      "}",
+      "",
+      method_comments,
+      "// TODO: Implement actual client method calls",
+    ],
+    "\n",
+  )
+}
+
+/// Generate server interface for service
+fn generate_server_interface(service: parser.Service) -> String {
+  let type_name = service.name <> "Server"
+  let method_comments = generate_method_comments(service.methods, "server")
+
+  string.join(
+    [
+      "/// Server interface for " <> service.name <> " service",
+      "/// Implement this trait to handle incoming service requests",
+      "pub type " <> type_name <> " {",
+      "  " <> type_name <> "(",
+      "    // TODO: Add server implementation fields",
+      "  )",
+      "}",
+      "",
+      method_comments,
+      "// TODO: Implement server method handlers and request routing",
+    ],
+    "\n",
+  )
+}
+
+/// Generate method signature comments
+fn generate_method_comments(
+  methods: List(parser.Method),
+  interface_type: String,
+) -> String {
+  let comment_prefix = case interface_type {
+    "client" -> "// Method signatures for " <> interface_type <> ":"
+    "server" -> "// Method signatures for " <> interface_type <> ":"
+    _ -> "// Method signatures:"
+  }
+
+  let method_lines =
+    list.map(methods, fn(method) {
+      let streaming_info =
+        get_streaming_comment(
+          method.client_streaming,
+          method.server_streaming,
+          interface_type,
+        )
+      "  // "
+      <> method.name
+      <> "("
+      <> method.input_type
+      <> ") -> "
+      <> method.output_type
+      <> " "
+      <> streaming_info
+    })
+
+  string.join([comment_prefix, ..method_lines], "\n")
+}
+
+/// Get streaming type comment for method
+fn get_streaming_comment(
+  client_streaming: Bool,
+  server_streaming: Bool,
+  interface_type: String,
+) -> String {
+  let base_type = case interface_type {
+    "server" ->
+      "// "
+      <> case client_streaming, server_streaming {
+        False, False -> "Unary handler"
+        False, True -> "Server streaming handler"
+        True, False -> "Client streaming handler"
+        True, True -> "Bidirectional streaming handler"
+      }
+    _ ->
+      "// "
+      <> case client_streaming, server_streaming {
+        False, False -> "Unary call"
+        False, True -> "Server streaming"
+        True, False -> "Client streaming"
+        True, True -> "Bidirectional streaming"
+      }
+  }
+  base_type
 }

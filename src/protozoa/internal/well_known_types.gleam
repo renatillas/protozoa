@@ -45,6 +45,7 @@ fn timestamp_proto() -> parser.ProtoFile {
       ),
     ],
     enums: [],
+    services: [],
   )
 }
 
@@ -78,6 +79,7 @@ fn duration_proto() -> parser.ProtoFile {
       ),
     ],
     enums: [],
+    services: [],
   )
 }
 
@@ -111,6 +113,7 @@ fn any_proto() -> parser.ProtoFile {
       ),
     ],
     enums: [],
+    services: [],
   )
 }
 
@@ -129,6 +132,7 @@ fn empty_proto() -> parser.ProtoFile {
       ),
     ],
     enums: [],
+    services: [],
   )
 }
 
@@ -275,6 +279,7 @@ fn wrappers_proto() -> parser.ProtoFile {
       ),
     ],
     enums: [],
+    services: [],
   )
 }
 
@@ -372,6 +377,7 @@ fn struct_proto() -> parser.ProtoFile {
         parser.EnumValue(name: "NULL_VALUE", number: 0),
       ]),
     ],
+    services: [],
   )
 }
 
@@ -398,6 +404,7 @@ fn field_mask_proto() -> parser.ProtoFile {
       ),
     ],
     enums: [],
+    services: [],
   )
 }
 
