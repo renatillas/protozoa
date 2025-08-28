@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Core Protocol Buffer Support**
+  - Complete proto3 syntax parsing
+  - Message and enum definitions
+  - All scalar field types (string, int32, int64, bool, bytes, etc.)
+  - Repeated and optional fields
+  - Nested messages and enums
+  - Oneof groups for union types
+  - Map fields with proper Dict support
+
+- **Code Generation**
+  - Full Gleam code generation from proto files
+  - Type-safe message types with proper field accessors
+  - Encoding functions for all supported types
+  - Decoding functions with comprehensive error handling
+  - Support for all protobuf wire format types
+
+- **Import System**
+  - Cross-file import support with dependency resolution
+  - Configurable search paths for proto file resolution
+  - Public and weak import handling
+  - Comprehensive type registry for cross-file type resolution
+  - Circular dependency detection
+
+- **CLI Integration**
+  - Project structure auto-detection (`src/[appname]/proto/`)
+  - Automatic proto file discovery and generation
+  - `gleam run -m protozoa` integration
+  - `--check` mode for CI/build systems
+  - Generated file safety headers to prevent manual editing
+
+- **Wire Format Support**
+  - Complete Protocol Buffer wire format encoding/decoding
+  - Support for all wire types (varint, fixed32, fixed64, length-delimited)
+  - Proper handling of field numbers and types
+  - Efficient bit array operations
+
 - **Service/RPC Support** - Complete implementation of Protocol Buffer services
   - Added `Service` and `Method` types to parser
   - Full parsing support for service definitions with RPC methods
@@ -60,52 +96,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Client streaming: `rpc Method(stream Request) returns (Response)`
   - Bidirectional: `rpc Method(stream Request) returns (stream Response)`
 - **Code Generation**: Service stubs generate client/server interfaces with method signatures
-
-## [1.0.0] - Initial Release
-
-### Added
-
-- **Core Protocol Buffer Support**
-  - Complete proto3 syntax parsing
-  - Message and enum definitions
-  - All scalar field types (string, int32, int64, bool, bytes, etc.)
-  - Repeated and optional fields
-  - Nested messages and enums
-  - Oneof groups for union types
-  - Map fields with proper Dict support
-
-- **Code Generation**
-  - Full Gleam code generation from proto files
-  - Type-safe message types with proper field accessors
-  - Encoding functions for all supported types
-  - Decoding functions with comprehensive error handling
-  - Support for all protobuf wire format types
-
-- **Import System**
-  - Cross-file import support with dependency resolution
-  - Configurable search paths for proto file resolution
-  - Public and weak import handling
-  - Comprehensive type registry for cross-file type resolution
-  - Circular dependency detection
-
-- **CLI Integration**
-  - Project structure auto-detection (`src/[appname]/proto/`)
-  - Automatic proto file discovery and generation
-  - `gleam run -m protozoa` integration
-  - `--check` mode for CI/build systems
-  - Generated file safety headers to prevent manual editing
-
-- **Wire Format Support**
-  - Complete Protocol Buffer wire format encoding/decoding
-  - Support for all wire types (varint, fixed32, fixed64, length-delimited)
-  - Proper handling of field numbers and types
-  - Efficient bit array operations
-
-### Technical Specifications
-
 - **Language**: Gleam with Erlang runtime
 - **Proto Version**: proto3 only
-- **Test Coverage**: 137 comprehensive tests
 - **Dependencies**: Minimal with stdlib, simplifile, argv, snag
 - **Platform**: Cross-platform (Erlang/JavaScript targets)
 
@@ -129,4 +121,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Performance Optimizations** - Lazy decoding, streaming for large messages
 - **Extended Validation** - Enhanced semantic validation and error reporting
-
