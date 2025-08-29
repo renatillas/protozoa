@@ -33,7 +33,7 @@ fn find_root(path: String) -> String {
   let toml = filepath.join(path, "gleam.toml")
 
   case simplifile.is_file(toml) {
-    Ok(False) | Error(_) -> find_root(filepath.join("..", path))
+    Ok(False) | Error(_) -> find_root(filepath.join(path, ".."))
     Ok(True) -> path
   }
 }
