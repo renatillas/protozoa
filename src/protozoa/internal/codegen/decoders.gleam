@@ -109,13 +109,13 @@ fn generate_map_entry_decoder(
 
   "fn "
   <> function_name
-  <> "() -> fn(wire.Field) -> Result(#("
+  <> "() -> fn(decode.Field) -> Result(#("
   <> get_gleam_type(key_type)
   <> ", "
   <> get_gleam_type(value_type)
   <> "), decode.DecodeError) {\n"
   <> "  fn(field) {\n"
-  <> "    case decode.message_field(field, fn(data) {\n"
+  <> "    let entry_decoder = {\n"
   <> "      use key <- decode.then("
   <> key_decoder
   <> ")\n"
@@ -123,7 +123,8 @@ fn generate_map_entry_decoder(
   <> value_decoder
   <> ")\n"
   <> "      decode.success(#(key, value))\n"
-  <> "    }) {\n"
+  <> "    }\n"
+  <> "    case decode.message_field(_, entry_decoder)(field) {\n"
   <> "      Ok(entry) -> Ok(entry)\n"
   <> "      Error(err) -> Error(err)\n"
   <> "    }\n"
@@ -139,6 +140,11 @@ fn generate_map_field_decoder(
     parser.String -> "decode.string_with_default(" <> field_num <> ", \"\")"
     parser.Int32 -> "decode.int32_with_default(" <> field_num <> ", 0)"
     parser.Bool -> "decode.bool_with_default(" <> field_num <> ", False)"
+    parser.MessageType("Value") -> "decode.nested_message(" <> field_num <> ", value_decoder())"
+    parser.MessageType(name) -> {
+      let decoder_name = string.lowercase(flatten_type_name(name)) <> "_decoder"
+      "decode.nested_message(" <> field_num <> ", " <> decoder_name <> "())"
+    }
     _ -> "decode.string_with_default(" <> field_num <> ", \"\")"
     // fallback
   }
@@ -149,6 +155,8 @@ fn get_gleam_type(proto_type: ProtoType) -> String {
     parser.String -> "String"
     parser.Int32 -> "Int"
     parser.Bool -> "Bool"
+    parser.MessageType("Value") -> "Value"
+    parser.MessageType(name) -> flatten_type_name(name)
     _ -> "String"
     // fallback
   }
@@ -183,6 +191,9 @@ fn generate_oneof_field_checks(fields: List(parser.Field)) -> String {
       let base_variant_name = capitalize_first(field.name)
       let variant_name = case base_variant_name, field.field_type {
         "Empty", parser.MessageType("google.protobuf.Empty") -> "EmptyData"
+        "StringValue", parser.String -> "StringValueVariant"
+        "BoolValue", parser.Bool -> "BoolValueVariant"
+        "ListValue", parser.MessageType("ListValue") -> "ListValueVariant"
         name, _ -> name
       }
       let field_decoder = get_field_decoder_for_type(field.field_type)
@@ -207,6 +218,9 @@ fn generate_oneof_field_checks(fields: List(parser.Field)) -> String {
       let base_variant_name = capitalize_first(field.name)
       let variant_name = case base_variant_name, field.field_type {
         "Empty", parser.MessageType("google.protobuf.Empty") -> "EmptyData"
+        "StringValue", parser.String -> "StringValueVariant"
+        "BoolValue", parser.Bool -> "BoolValueVariant"
+        "ListValue", parser.MessageType("ListValue") -> "ListValueVariant"
         name, _ -> name
       }
       let field_decoder = get_field_decoder_for_type(field.field_type)
@@ -248,7 +262,7 @@ fn get_field_decoder_for_type(field_type: parser.ProtoType) -> String {
     }
     parser.EnumType(name) -> {
       let decoder_name =
-        "decode_" <> string.lowercase(flatten_type_name(name)) <> "_field"
+        "decode_" <> string.lowercase(flatten_type_name(name)) <> "_from_field"
       decoder_name
     }
     _ -> "decode.string_field"
@@ -396,6 +410,10 @@ fn generate_simple_type_decoder(proto_type: ProtoType) -> String {
     parser.Bytes -> "decode.bytes_field(field)"
     parser.Float -> "decode.float_field(field)"
     parser.Double -> "decode.double_field(field)"
+    parser.MessageType(name) ->
+      "decode.message_field(_, "
+      <> string.lowercase(flatten_type_name(name))
+      <> "_decoder())(field)"
     _ ->
       "Error(decode.DecodeError(expected: \"supported field type\", found: \"unsupported field type\", path: []))"
   }
@@ -413,7 +431,7 @@ fn generate_simple_field_decoder_name(proto_type: ProtoType) -> String {
     parser.Float -> "decode.float_field"
     parser.Double -> "decode.double_field"
     _ ->
-      "fn(_) { Error(decode.DecodeError(expected: \"supported field type\", found: \"unsupported field type\", path: [])) }"
+      "fn(_field) { Error(decode.DecodeError(expected: \"supported field type\", found: \"unsupported field type\", path: [])) }"
   }
 }
 

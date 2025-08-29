@@ -86,6 +86,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Service blocks are now correctly skipped in message/enum parsing
   - Fixed method signature parsing to handle multiple space-separated parts
   - Improved error handling for malformed service definitions
+- **Code Generation Quality** - Eliminated unused variable warnings in generated code
+  - Fixed unused variable in map entry encoder generation
+  - Added proper MessageType support in repeated field decoders
+  - Enhanced simple type decoder to handle nested message types
+  - Improved encoder generation to use underscore prefix for unused variables
 
 ### Technical Details
 

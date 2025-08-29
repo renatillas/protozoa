@@ -321,8 +321,11 @@ fn generate_oneof_encoder(
       let field_num = int.to_string(field.number)
       let gleam_type = get_type_name(field.field_type)
       // Avoid naming conflicts with well-known types
-      let variant_name = case base_variant_name, gleam_type {
-        "Empty", "google.protobuf.Empty" -> "EmptyData"
+      let variant_name = case base_variant_name, field.field_type {
+        "Empty", parser.MessageType("google.protobuf.Empty") -> "EmptyData"
+        "StringValue", parser.String -> "StringValueVariant"
+        "BoolValue", parser.Bool -> "BoolValueVariant"
+        "ListValue", parser.MessageType("ListValue") -> "ListValueVariant"
         name, _ -> name
       }
       let encoder =
@@ -402,7 +405,7 @@ fn generate_map_field_code(field: Field, param_name: String) -> String {
       <> var_name
       <> " = list.map("
       <> field_access
-      <> ", fn(pair) { let #(key, value) = pair\n    encode.message(["
+      <> ", fn(pair) { let #(key, _value) = pair\n    encode.message(["
       <> key_encoder
       <> ", "
       <> value_encoder
@@ -494,6 +497,40 @@ fn generate_enum_decoder(enum: parser.Enum) -> String {
   <> " value: \" <> string.inspect(value), path: []))\n"
   <> "    }\n"
   <> "  })\n"
+  <> "}\n"
+  <> "\n"
+  <> generate_enum_field_decoder(enum)
+}
+
+fn generate_enum_field_decoder(enum: parser.Enum) -> String {
+  let function_name = "decode_" <> string.lowercase(enum.name) <> "_from_field"
+  let decode_cases =
+    enum.values
+    |> list.map(fn(variant) {
+      let variant_name = capitalize_first(variant.name)
+      "      "
+      <> int.to_string(variant.number)
+      <> " -> Ok("
+      <> variant_name
+      <> ")"
+    })
+    |> string.join("\n")
+
+  "fn "
+  <> function_name
+  <> "(field: decode.Field) -> Result("
+  <> enum.name
+  <> ", decode.DecodeError) {\n"
+  <> "  use value <- result.try(decode.int32_field(field))\n"
+  <> "  case value {\n"
+  <> decode_cases
+  <> "\n"
+  <> "    _ -> Error(decode.DecodeError(expected: \"valid "
+  <> string.lowercase(enum.name)
+  <> " value\", found: \"Unknown "
+  <> string.lowercase(enum.name)
+  <> " value: \" <> string.inspect(value), path: []))\n"
+  <> "  }\n"
   <> "}"
 }
 

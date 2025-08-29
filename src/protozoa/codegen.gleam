@@ -59,30 +59,38 @@ pub fn generate_combined_proto_file(
 ) -> Result(List(#(String, String)), String) {
   let output_path = output_dir <> "/proto.gleam"
   
-  // Filter out well-known proto files since they're handled separately
+  // Split files into user files and well-known files
   let user_files = list.filter(files, fn(file) {
     !is_well_known_proto_file(file.path)
+  })
+  let well_known_files = list.filter(files, fn(file) {
+    is_well_known_proto_file(file.path)
   })
   
   let combined_header = generate_combined_file_header(user_files)
   let combined_imports = generate_combined_imports(files, registry)
   
-  // Generate combined well-known types (deduplicated)
-  let well_known_defs = generate_combined_well_known_definitions(files)
-  
-  // Generate content for each user file separately, then combine
-  use all_sections <- result.try(
+  // Generate content for user files
+  use user_sections <- result.try(
     list.try_map(user_files, fn(file_entry) {
       generate_file_content_sections(file_entry.content, file_entry.path, registry)
     })
   )
   
+  // Generate content for well-known files
+  use well_known_sections <- result.try(
+    list.try_map(well_known_files, fn(file_entry) {
+      generate_file_content_sections(file_entry.content, file_entry.path, registry)
+    })
+  )
+  
+  // Combine all sections from both user and well-known files
+  let all_sections = list.append(user_sections, well_known_sections)
   let combined_sections = combine_content_sections(all_sections)
   
   let final_code = string.join([
     combined_header,
     combined_imports,
-    well_known_defs,
     combined_sections.enum_types,
     combined_sections.message_types,
     combined_sections.message_encoders,
@@ -562,26 +570,36 @@ fn get_field_well_known_types(message: parser.Message) -> List(String) {
 
 fn is_well_known_type(type_name: String) -> Bool {
   case type_name {
+    // Fully qualified names
     "google.protobuf.Timestamp"
     | "google.protobuf.Duration"
     | "google.protobuf.FieldMask"
     | "google.protobuf.Empty"
     | "google.protobuf.Any"
     | "google.protobuf.Struct"
-    | "google.protobuf.StringValue" -> True
+    | "google.protobuf.StringValue"
+    // Flattened names (what the parser might use after resolution)
+    | "Timestamp"
+    | "Duration"
+    | "FieldMask"
+    | "Empty"
+    | "Any"
+    | "Struct"
+    | "StringValue" -> True
     _ -> False
   }
 }
 
 fn generate_well_known_type_definition(type_name: String) -> String {
   case type_name {
-    "google.protobuf.Timestamp" -> generate_timestamp_definition()
-    "google.protobuf.Duration" -> generate_duration_definition()
-    "google.protobuf.FieldMask" -> generate_fieldmask_definition()
-    "google.protobuf.Empty" -> generate_empty_definition()
-    "google.protobuf.Any" -> generate_any_definition()
-    "google.protobuf.Struct" -> generate_struct_definition()
-    "google.protobuf.StringValue" -> generate_stringvalue_definition()
+    // Fully qualified names
+    "google.protobuf.Timestamp" | "Timestamp" -> generate_timestamp_definition()
+    "google.protobuf.Duration" | "Duration" -> generate_duration_definition()
+    "google.protobuf.FieldMask" | "FieldMask" -> generate_fieldmask_definition()
+    "google.protobuf.Empty" | "Empty" -> generate_empty_definition()
+    "google.protobuf.Any" | "Any" -> generate_any_definition()
+    "google.protobuf.Struct" | "Struct" -> generate_struct_definition()
+    "google.protobuf.StringValue" | "StringValue" -> generate_stringvalue_definition()
     _ -> ""
   }
 }
