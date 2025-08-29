@@ -182,7 +182,19 @@ fn add_enum(
 
   case dict.get(registry.enums, fqn) {
     Ok(_existing) -> {
-      Error(DuplicateEnumDefinition(fqn))
+      case dict.get(registry.type_sources, fqn) {
+        Ok(source) if source == file_path -> {
+          // Same file redefining - this is ok during reprocessing
+          Ok(
+            TypeRegistry(
+              ..registry,
+              enums: dict.insert(registry.enums, fqn, enum),
+              type_sources: dict.insert(registry.type_sources, fqn, file_path),
+            ),
+          )
+        }
+        _ -> Error(DuplicateEnumDefinition(fqn))
+      }
     }
     Error(_) -> {
       Ok(
