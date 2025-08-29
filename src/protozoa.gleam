@@ -38,7 +38,7 @@ pub fn main() -> Nil {
       print_usage()
       exit(0)
     }
-    Error(snag.Snag(issue: msg, ..) as error) -> {
+    Error(error) -> {
       io.println_error("❌ Error: " <> error |> snag.pretty_print())
       print_usage()
       exit(1)
