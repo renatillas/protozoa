@@ -13,12 +13,13 @@ import protozoa/encode
 import protozoa/wire
 
 pub type FieldMask {
-  FieldMask(paths: List(String))
+  FieldMask(
+    paths: List(String),
+  )
 }
 
 pub fn encode_fieldmask(fieldmask: FieldMask) -> BitArray {
-  let paths_fields =
-    list.map(fieldmask.paths, fn(v) { encode.string_field(1, v) })
+  let paths_fields = list.map(fieldmask.paths, fn(v) { encode.string_field(1, v) })
   encode.message(paths_fields)
 }
 
@@ -28,7 +29,10 @@ pub fn fieldmask_decoder() -> decode.Decoder(FieldMask) {
 }
 
 pub type Duration {
-  Duration(seconds: Int, nanos: Int)
+  Duration(
+    seconds: Int,
+    nanos: Int,
+  )
 }
 
 pub fn encode_duration(duration: Duration) -> BitArray {
@@ -45,7 +49,10 @@ pub fn duration_decoder() -> decode.Decoder(Duration) {
 }
 
 pub type Timestamp {
-  Timestamp(seconds: Int, nanos: Int)
+  Timestamp(
+    seconds: Int,
+    nanos: Int,
+  )
 }
 
 pub fn encode_timestamp(timestamp: Timestamp) -> BitArray {
@@ -88,7 +95,9 @@ pub type ServiceResponseResponse {
 }
 
 pub type ServiceResponse {
-  ServiceResponse(response: option.Option(ServiceResponseResponse))
+  ServiceResponse(
+    response: option.Option(ServiceResponseResponse),
+  )
 }
 
 pub fn encode_serviceresponse(serviceresponse: ServiceResponse) -> BitArray {
@@ -96,10 +105,8 @@ pub fn encode_serviceresponse(serviceresponse: ServiceResponse) -> BitArray {
     case serviceresponse.response {
       Some(oneof_value) -> {
         case oneof_value {
-          Data(value) ->
-            encode.field(1, wire.LengthDelimited, encode_eventmessage(value))
-          EmptyData(value) ->
-            encode.field(2, wire.LengthDelimited, encode_empty(value))
+      Data(value) -> encode.field(1, wire.LengthDelimited, encode_eventmessage(value))
+      EmptyData(value) -> encode.field(2, wire.LengthDelimited, encode_empty(value))
         }
       }
       None -> <<>>
@@ -110,55 +117,41 @@ pub fn encode_serviceresponse(serviceresponse: ServiceResponse) -> BitArray {
 pub fn encode_eventmessage(eventmessage: EventMessage) -> BitArray {
   encode.message([
     encode.string_field(1, eventmessage.event_name),
-    encode.field(
-      2,
-      wire.LengthDelimited,
-      encode_timestamp(eventmessage.occurred_at),
-    ),
-    encode.field(
-      3,
-      wire.LengthDelimited,
-      encode_duration(eventmessage.duration),
-    ),
-    encode.field(
-      4,
-      wire.LengthDelimited,
-      encode_fieldmask(eventmessage.update_mask),
-    ),
+    encode.field(2, wire.LengthDelimited, encode_timestamp(eventmessage.occurred_at)),
+    encode.field(3, wire.LengthDelimited, encode_duration(eventmessage.duration)),
+    encode.field(4, wire.LengthDelimited, encode_fieldmask(eventmessage.update_mask)),
   ])
 }
 
-fn oneof_response_decoder() -> decode.Decoder(
-  option.Option(ServiceResponseResponse),
-) {
+fn oneof_response_decoder() -> decode.Decoder(option.Option(ServiceResponseResponse)) {
   decode.from_field_dict(fn(fields) {
     case dict.get(fields, 1) {
       Ok([field, ..]) -> {
         case decode.message_field(_, eventmessage_decoder())(field) {
           Ok(value) -> Ok(option.Some(Data(value)))
           Error(_) -> {
-            case dict.get(fields, 2) {
-              Ok([field, ..]) -> {
-                case decode.message_field(_, empty_decoder())(field) {
-                  Ok(value) -> Ok(option.Some(EmptyData(value)))
-                  Error(_) -> Ok(option.None)
-                }
-              }
-              _ -> Ok(option.None)
-            }
+    case dict.get(fields, 2) {
+      Ok([field, ..]) -> {
+        case decode.message_field(_, empty_decoder())(field) {
+          Ok(value) -> Ok(option.Some(EmptyData(value)))
+          Error(_) -> Ok(option.None)
+        }
+      }
+      _ -> Ok(option.None)
+    }
           }
         }
       }
       _ -> {
-        case dict.get(fields, 2) {
-          Ok([field, ..]) -> {
-            case decode.message_field(_, empty_decoder())(field) {
-              Ok(value) -> Ok(option.Some(EmptyData(value)))
-              Error(_) -> Ok(option.None)
-            }
-          }
-          _ -> Ok(option.None)
+    case dict.get(fields, 2) {
+      Ok([field, ..]) -> {
+        case decode.message_field(_, empty_decoder())(field) {
+          Ok(value) -> Ok(option.Some(EmptyData(value)))
+          Error(_) -> Ok(option.None)
         }
+      }
+      _ -> Ok(option.None)
+    }
       }
     }
   })
@@ -169,9 +162,7 @@ pub fn serviceresponse_decoder() -> decode.Decoder(ServiceResponse) {
   decode.success(ServiceResponse(response: response))
 }
 
-pub fn decode_serviceresponse(
-  data: BitArray,
-) -> Result(ServiceResponse, List(decode.DecodeError)) {
+pub fn decode_serviceresponse(data: BitArray) -> Result(ServiceResponse, List(decode.DecodeError)) {
   decode.run(data, serviceresponse_decoder())
 }
 
@@ -180,16 +171,9 @@ pub fn eventmessage_decoder() -> decode.Decoder(EventMessage) {
   use occurred_at <- decode.then(decode.nested_message(2, timestamp_decoder()))
   use duration <- decode.then(decode.nested_message(3, duration_decoder()))
   use update_mask <- decode.then(decode.nested_message(4, fieldmask_decoder()))
-  decode.success(EventMessage(
-    event_name: event_name,
-    occurred_at: occurred_at,
-    duration: duration,
-    update_mask: update_mask,
-  ))
+  decode.success(EventMessage(event_name: event_name, occurred_at: occurred_at, duration: duration, update_mask: update_mask))
 }
 
-pub fn decode_eventmessage(
-  data: BitArray,
-) -> Result(EventMessage, List(decode.DecodeError)) {
+pub fn decode_eventmessage(data: BitArray) -> Result(EventMessage, List(decode.DecodeError)) {
   decode.run(data, eventmessage_decoder())
 }

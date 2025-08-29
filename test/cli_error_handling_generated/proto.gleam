@@ -9,12 +9,14 @@ import protozoa/decode
 import protozoa/encode
 
 pub type ProblematicMessage {
-  ProblematicMessage(import_: String, type_: String, fn_: String)
+  ProblematicMessage(
+    import_: String,
+    type_: String,
+    fn_: String,
+  )
 }
 
-pub fn encode_problematicmessage(
-  problematicmessage: ProblematicMessage,
-) -> BitArray {
+pub fn encode_problematicmessage(problematicmessage: ProblematicMessage) -> BitArray {
   encode.message([
     encode.string_field(1, problematicmessage.import_),
     encode.string_field(2, problematicmessage.type_),
@@ -29,8 +31,6 @@ pub fn problematicmessage_decoder() -> decode.Decoder(ProblematicMessage) {
   decode.success(ProblematicMessage(import_: import_, type_: type_, fn_: fn_))
 }
 
-pub fn decode_problematicmessage(
-  data: BitArray,
-) -> Result(ProblematicMessage, List(decode.DecodeError)) {
+pub fn decode_problematicmessage(data: BitArray) -> Result(ProblematicMessage, List(decode.DecodeError)) {
   decode.run(data, problematicmessage_decoder())
 }

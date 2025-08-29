@@ -415,7 +415,7 @@ pub fn cli_compile_basic_proto_test() {
   assert string.contains(output, "file(s):")
 
   // Check that output file was created
-  let expected_file = output_dir <> "/simple_scalars.gleam"
+  let expected_file = output_dir <> "/proto.gleam"
   assert Ok(True) == simplifile.is_file(expected_file)
 
   // Verify generated content has expected structure
@@ -463,11 +463,11 @@ pub fn cli_compile_with_imports_test() {
   // Should indicate successful generation
   assert string.contains(output, "Successfully generated")
 
-  // Check that multiple files were generated (due to imports)
+  // Check that the proto file was generated (now combined into one file)
   let assert Ok(files) = simplifile.read_directory(output_dir)
   assert list.length(files) >= 1
-  // Should have the main file
-  assert list.contains(files, "imports.gleam")
+  // Should have the combined proto file
+  assert list.contains(files, "proto.gleam")
 
   // Clean up
   let _ = simplifile.delete(output_dir)
@@ -518,7 +518,7 @@ pub fn cli_creates_output_directory_test() {
   // Check that the nested directory was created
   let assert Ok(True) = simplifile.is_directory(output_dir)
   // Check that file was generated in the correct location
-  let expected_file = output_dir <> "/simple_scalars.gleam"
+  let expected_file = output_dir <> "/proto.gleam"
   let assert Ok(True) = simplifile.is_file(expected_file)
 
   // Clean up
@@ -669,6 +669,134 @@ pub fn imports_proto_compilation_test() {
   let _ = simplifile.delete(output_dir)
 }
 
+pub fn multiple_proto_files_combined_test() {
+  let output_dir = "test_combined_multi"
+  
+  // Clean up any existing output
+  case simplifile.delete(output_dir) {
+    Ok(_) -> Nil
+    Error(_) -> Nil
+  }
+  let _ = simplifile.create_directory_all(output_dir)
+
+  // Test combining multiple proto files with cross-references and imports
+  let assert Ok(output) =
+    shellout.command(
+      run: "gleam",
+      with: [
+        "run",
+        "-m",
+        "protozoa",
+        "--",
+        "-Itest/proto",
+        "test/proto/imports.proto",
+        output_dir,
+      ],
+      in: ".",
+      opt: [],
+    )
+
+  // Should indicate successful generation
+  assert string.contains(output, "Successfully generated")
+  assert string.contains(output, "1 file(s):")
+
+  // Check that only one proto.gleam file was generated
+  let assert Ok(files) = simplifile.read_directory(output_dir)
+  assert list.length(files) == 1
+  assert list.contains(files, "proto.gleam")
+
+  // Verify the generated content combines both files
+  let expected_file = output_dir <> "/proto.gleam"
+  let assert Ok(content) = simplifile.read(expected_file)
+  
+  // Should contain header mentioning both files
+  assert string.contains(content, "common.proto")
+  assert string.contains(content, "imports.proto")
+  
+  // Should contain types from common.proto
+  assert string.contains(content, "pub type Address")
+  assert string.contains(content, "pub type Priority")
+  assert string.contains(content, "pub type Timestamp")
+  
+  // Should contain types from imports.proto
+  assert string.contains(content, "pub type Person")
+  assert string.contains(content, "pub type Organization")
+  
+  // Should contain encoders and decoders for all types
+  assert string.contains(content, "pub fn encode_address")
+  assert string.contains(content, "pub fn encode_person")
+  assert string.contains(content, "pub fn address_decoder")
+  assert string.contains(content, "pub fn person_decoder")
+  
+  // Should contain enum helpers
+  assert string.contains(content, "encode_priority_value")
+  assert string.contains(content, "decode_priority_field")
+
+  // Clean up
+  let _ = simplifile.delete(output_dir)
+}
+
+pub fn well_known_types_deduplication_test() {
+  let output_dir = "test_well_known_dedup"
+  
+  // Clean up any existing output
+  case simplifile.delete(output_dir) {
+    Ok(_) -> Nil
+    Error(_) -> Nil
+  }
+  let _ = simplifile.create_directory_all(output_dir)
+
+  // Test that well-known types are not duplicated when multiple files reference them
+  let assert Ok(output) =
+    shellout.command(
+      run: "gleam",
+      with: [
+        "run",
+        "-m",
+        "protozoa",
+        "--",
+        "test/proto/well_known.proto",
+        output_dir,
+      ],
+      in: ".",
+      opt: [],
+    )
+
+  // Should indicate successful generation
+  assert string.contains(output, "Successfully generated")
+
+  // Verify the generated content doesn't have duplicate types
+  let expected_file = output_dir <> "/proto.gleam"
+  let assert Ok(content) = simplifile.read(expected_file)
+  
+  // Count occurrences of well-known types - should appear only once each
+  let timestamp_count = count_occurrences(content, "pub type Timestamp")
+  let duration_count = count_occurrences(content, "pub type Duration")
+  let empty_count = count_occurrences(content, "pub type Empty")
+  let fieldmask_count = count_occurrences(content, "pub type FieldMask")
+  
+  assert timestamp_count == 1
+  assert duration_count == 1
+  assert empty_count == 1
+  assert fieldmask_count == 1
+  
+  // Should still have encoders and decoders for each type
+  assert string.contains(content, "pub fn encode_timestamp")
+  assert string.contains(content, "pub fn timestamp_decoder")
+  assert string.contains(content, "pub fn encode_duration")
+  assert string.contains(content, "pub fn duration_decoder")
+
+  // Clean up
+  let _ = simplifile.delete(output_dir)
+}
+
+fn count_occurrences(text: String, pattern: String) -> Int {
+  text
+  |> string.split(pattern)
+  |> list.length()
+  |> fn(n) { n - 1 }
+}
+
 pub fn oneofs_maps_proto_compilation_test() {
   let output_dir = "test_oneofs_maps_validation"
 
@@ -693,7 +821,7 @@ pub fn oneofs_maps_proto_compilation_test() {
   assert string.contains(output, "Successfully generated")
   let assert Ok(files) = simplifile.read_directory(output_dir)
   assert list.length(files) >= 1
-  let expected_file = output_dir <> "/oneofs_maps.gleam"
+  let expected_file = output_dir <> "/proto.gleam"
   let assert Ok(content) = simplifile.read(expected_file)
   assert string.contains(content, "pub type ")
     || string.contains(content, "oneof")
@@ -761,7 +889,7 @@ pub fn cli_edge_cases_test() {
 
   assert string.contains(output, "Successfully generated")
 
-  let expected_file = output_dir <> "/test_empty_temp.gleam"
+  let expected_file = output_dir <> "/proto.gleam"
   let assert Ok(content) = simplifile.read(expected_file)
   assert string.contains(content, "pub type Empty")
   assert string.contains(content, "pub fn encode_empty")
@@ -794,7 +922,7 @@ pub fn cli_output_format_test() {
   assert string.contains(output, "Successfully generated")
   assert string.contains(output, "file(s):")
 
-  assert string.contains(output, "simple_scalars.gleam")
+  assert string.contains(output, "proto.gleam")
 
   let _ = simplifile.delete(output_dir)
 }

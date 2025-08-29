@@ -487,9 +487,11 @@ fn generate_enum_decoder(enum: parser.Enum) -> String {
   <> "    case value {\n"
   <> decode_cases
   <> "\n"
-  <> "      _ -> Error(decode.DecodeError(\"Unknown "
+  <> "      _ -> Error(decode.DecodeError(expected: \"valid "
   <> string.lowercase(enum.name)
-  <> " value: \" <> string.inspect(value)))\n"
+  <> " value\", found: \"Unknown "
+  <> string.lowercase(enum.name)
+  <> " value: \" <> string.inspect(value), path: []))\n"
   <> "    }\n"
   <> "  })\n"
   <> "}"

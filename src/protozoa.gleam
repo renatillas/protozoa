@@ -204,7 +204,7 @@ fn generate_files(
     })
 
   use generated <- result.try(
-    codegen.generate_with_imports(paths, registry, output)
+    codegen.generate_combined_proto_file(paths, registry, output)
     |> result.map_error(fn(err) { snag.new("Codegen failed: " <> err) }),
   )
 
