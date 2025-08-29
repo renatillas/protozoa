@@ -3,6 +3,7 @@
 //// Generates Gleam code from Protocol Buffer (.proto) files with complete proto3 support.
 
 import argv
+import filepath
 import gleam/int
 import gleam/io
 import gleam/list
@@ -11,6 +12,7 @@ import gleam/string
 import protozoa/codegen
 import protozoa/internal/import_resolver
 import protozoa/parser
+import protozoa/project
 import simplifile
 import snag.{type Result}
 
@@ -113,14 +115,12 @@ fn extract_imports(
 }
 
 fn discover_project_structure() -> Result(#(String, String)) {
-  use content <- result.try(
-    simplifile.read("gleam.toml")
-    |> snag.map_error(simplifile.describe_error),
+  use name <- result.try(
+    project.name()
+    |> result.map_error(fn(_) { snag.new("Project name not found in gleam.toml") }),
   )
 
-  use name <- result.try(extract_project_name(content))
-
-  let proto_dir = "src/" <> name <> "/proto"
+  let proto_dir = filepath.join(project.src(), name <> "/proto")
   use proto_files <- result.try(
     simplifile.read_directory(proto_dir)
     |> snag.map_error(simplifile.describe_error),
@@ -133,21 +133,6 @@ fn discover_project_structure() -> Result(#(String, String)) {
   }
 }
 
-fn extract_project_name(content: String) -> Result(String) {
-  case
-    content
-    |> string.split("\n")
-    |> list.find(fn(line) { string.starts_with(line, "name = ") })
-  {
-    Ok(line) -> {
-      case string.split(line, "\"") {
-        [_, name, ..] -> Ok(name)
-        _ -> snag.error("Invalid name format")
-      }
-    }
-    Error(_) -> snag.error("Project name not found in gleam.toml")
-  }
-}
 
 fn run_generate(
   input: String,
