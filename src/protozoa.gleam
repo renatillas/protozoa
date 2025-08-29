@@ -68,14 +68,16 @@ fn parse_auto_mode(
     Ok(#(input, output)) -> {
       Ok(#(cmd, input, output, ["."]))
     }
-    Error(_) -> {
+    Error(error) -> {
       case cmd {
         Check -> {
           // For check mode, we can proceed even without proto files
           // This allows checking in projects that don't have proto files yet
           Ok(#(cmd, ".", ".", ["."]))
         }
-        Generate -> snag.error("No gleam.toml found or no proto files detected")
+        Generate ->
+          Error(error)
+          |> snag.context("No gleam.toml found or no proto files detected")
       }
     }
   }
