@@ -274,11 +274,11 @@ fn generate_required_field_encoder(
     parser.MessageType(_) ->
       "encode.field("
       <> field_num
-      <> ", wire.LengthDelimited, encode_"
+      <> ", wire.LengthDelimited, encode.length_delimited(encode_"
       <> string.lowercase(flatten_type_name(get_type_name(proto_type)))
       <> "("
       <> access
-      <> "))"
+      <> ")))"
     parser.EnumType(_) ->
       "encode.int32_field("
       <> field_num
@@ -319,7 +319,7 @@ fn generate_oneof_encoder(
     |> list.map(fn(field) {
       let base_variant_name = capitalize_first(field.name)
       let field_num = int.to_string(field.number)
-      let gleam_type = get_type_name(field.field_type)
+      let _gleam_type = get_type_name(field.field_type)
       // Avoid naming conflicts with well-known types
       let variant_name = case base_variant_name, field.field_type {
         "Empty", parser.MessageType("google.protobuf.Empty") -> "EmptyData"
@@ -378,9 +378,9 @@ fn generate_repeated_item_encoder(
     parser.MessageType(_) ->
       "encode.field("
       <> field_num
-      <> ", wire.LengthDelimited, encode_"
+      <> ", wire.LengthDelimited, encode.length_delimited(encode_"
       <> string.lowercase(flatten_type_name(get_type_name(proto_type)))
-      <> "(v))"
+      <> "(v)))"
     parser.EnumType(_) ->
       "encode.int32_field("
       <> field_num

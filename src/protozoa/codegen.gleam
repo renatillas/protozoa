@@ -3,7 +3,6 @@
 //// This module orchestrates the generation of idiomatic Gleam code from parsed Protocol Buffer
 //// definitions. It delegates to specialized sub-modules for different aspects of code generation.
 
-import gleam/dict
 import gleam/list
 import gleam/result
 import gleam/string
@@ -11,7 +10,6 @@ import protozoa/internal/codegen/decoders
 import protozoa/internal/codegen/encoders
 import protozoa/internal/codegen/types
 import protozoa/internal/type_registry.{type TypeRegistry}
-import protozoa/internal/well_known_types
 import protozoa/parser.{type Path, type ProtoFile}
 import simplifile
 
@@ -58,90 +56,64 @@ pub fn generate_combined_proto_file(
   output_dir output_dir: String,
 ) -> Result(List(#(String, String)), String) {
   let output_path = output_dir <> "/proto.gleam"
-  
+
   // Split files into user files and well-known files
-  let user_files = list.filter(files, fn(file) {
-    !is_well_known_proto_file(file.path)
-  })
-  let well_known_files = list.filter(files, fn(file) {
-    is_well_known_proto_file(file.path)
-  })
-  
+  let user_files =
+    list.filter(files, fn(file) { !is_well_known_proto_file(file.path) })
+  let well_known_files =
+    list.filter(files, fn(file) { is_well_known_proto_file(file.path) })
+
   let combined_header = generate_combined_file_header(user_files)
   let combined_imports = generate_combined_imports(files, registry)
-  
+
   // Generate content for user files
   use user_sections <- result.try(
     list.try_map(user_files, fn(file_entry) {
-      generate_file_content_sections(file_entry.content, file_entry.path, registry)
-    })
+      generate_file_content_sections(
+        file_entry.content,
+        file_entry.path,
+        registry,
+      )
+    }),
   )
-  
+
   // Generate content for well-known files
   use well_known_sections <- result.try(
     list.try_map(well_known_files, fn(file_entry) {
-      generate_file_content_sections(file_entry.content, file_entry.path, registry)
-    })
+      generate_file_content_sections(
+        file_entry.content,
+        file_entry.path,
+        registry,
+      )
+    }),
   )
-  
+
   // Combine all sections from both user and well-known files
   let all_sections = list.append(user_sections, well_known_sections)
   let combined_sections = combine_content_sections(all_sections)
-  
-  let final_code = string.join([
-    combined_header,
-    combined_imports,
-    combined_sections.enum_types,
-    combined_sections.message_types,
-    combined_sections.message_encoders,
-    combined_sections.message_decoders,
-    combined_sections.enum_helpers,
-    combined_sections.service_stubs
-  ] |> list.filter(fn(section) { !string.is_empty(section) }), "\n\n")
-  
+
+  let final_code =
+    string.join(
+      [
+        combined_header,
+        combined_imports,
+        combined_sections.enum_types,
+        combined_sections.message_types,
+        combined_sections.message_encoders,
+        combined_sections.message_decoders,
+        combined_sections.enum_helpers,
+        combined_sections.service_stubs,
+      ]
+        |> list.filter(fn(section) { !string.is_empty(section) }),
+      "\n\n",
+    )
+
   use _ <- result.try(
     simplifile.write(output_path, final_code)
     |> result.map_error(fn(_) { "Failed to write file: " <> output_path }),
   )
-  
-  Ok([#(output_path, final_code)])
-}
 
-fn get_referenced_well_known_proto_files(
-  files: List(Path),
-  _registry: TypeRegistry,
-) -> List(Path) {
-  // Get all imported well-known proto files from the registry
-  let well_known_proto_files = well_known_types.get_well_known_proto_files()
-  
-  // Find which well-known types are actually referenced
-  let referenced_paths =
-    files
-    |> list.fold([], fn(acc, file) {
-      let referenced = get_referenced_well_known_types(file.content)
-      let paths = list.filter_map(referenced, fn(type_name) {
-        case type_name {
-          "google.protobuf.Timestamp" -> Ok("google/protobuf/timestamp.proto")
-          "google.protobuf.Duration" -> Ok("google/protobuf/duration.proto")
-          "google.protobuf.Any" -> Ok("google/protobuf/any.proto")
-          "google.protobuf.Empty" -> Ok("google/protobuf/empty.proto")
-          "google.protobuf.FieldMask" -> Ok("google/protobuf/field_mask.proto")
-          "google.protobuf.Struct" -> Ok("google/protobuf/struct.proto")
-          "google.protobuf.StringValue" -> Ok("google/protobuf/wrappers.proto")
-          _ -> Error(Nil)
-        }
-      })
-      list.append(acc, paths)
-    })
-    |> list.unique()
-  
-  // Convert to Path entries
-  list.filter_map(referenced_paths, fn(path) {
-    case dict.get(well_known_proto_files, path) {
-      Ok(proto_file) -> Ok(parser.Path(path, proto_file))
-      Error(_) -> Error(Nil)
-    }
-  })
+  Ok([#(output_path, final_code)])
 }
 
 /// Generate code for a single proto file
@@ -208,12 +180,14 @@ fn get_base_name(file_path: String) -> String {
 }
 
 fn generate_combined_file_header(files: List(Path)) -> String {
-  let file_list = 
+  let file_list =
     files
     |> list.map(fn(file) { file.path })
     |> string.join(", ")
-    
-  "//// Generated by Protozoa from " <> file_list <> "\n"
+
+  "//// Generated by Protozoa from "
+  <> file_list
+  <> "\n"
   <> "//// \n"
   <> "//// This file is auto-generated and can be safely deleted and regenerated.\n"
   <> "//// To regenerate all proto files, run: gleam run -m protozoa\n"
@@ -221,9 +195,12 @@ fn generate_combined_file_header(files: List(Path)) -> String {
   <> "//// DO NOT EDIT THIS FILE MANUALLY - all changes will be lost on regeneration."
 }
 
-fn generate_combined_imports(files: List(Path), _registry: TypeRegistry) -> String {
+fn generate_combined_imports(
+  files: List(Path),
+  _registry: TypeRegistry,
+) -> String {
   // Collect all imports needed across all proto files
-  let all_needed_imports = 
+  let all_needed_imports =
     files
     |> list.fold([], fn(acc, file) {
       let file_imports = determine_needed_imports(file.content)
@@ -231,10 +208,9 @@ fn generate_combined_imports(files: List(Path), _registry: TypeRegistry) -> Stri
     })
     |> list.unique()
     |> list.sort(string.compare)
-  
+
   string.join(all_needed_imports, "\n")
 }
-
 
 pub type ContentSections {
   ContentSections(
@@ -245,26 +221,6 @@ pub type ContentSections {
     enum_helpers: String,
     service_stubs: String,
   )
-}
-
-fn generate_combined_well_known_definitions(files: List(Path)) -> String {
-  // Collect all referenced well-known types across all files
-  let all_referenced_types = 
-    files
-    |> list.fold([], fn(acc, file) {
-      let file_types = get_referenced_well_known_types(file.content)
-      list.append(acc, file_types)
-    })
-    |> list.unique()
-  
-  case all_referenced_types {
-    [] -> ""
-    _ -> {
-      all_referenced_types
-      |> list.map(generate_well_known_type_definition)
-      |> string.join("\n\n")
-    }
-  }
 }
 
 fn generate_file_content_sections(
@@ -304,17 +260,35 @@ fn generate_file_content_sections(
   ))
 }
 
-fn combine_content_sections(all_sections: List(ContentSections)) -> ContentSections {
-  list.fold(all_sections, ContentSections("", "", "", "", "", ""), fn(acc, section) {
-    ContentSections(
-      enum_types: combine_non_empty(acc.enum_types, section.enum_types),
-      message_types: combine_non_empty(acc.message_types, section.message_types),
-      message_encoders: combine_non_empty(acc.message_encoders, section.message_encoders),
-      message_decoders: combine_non_empty(acc.message_decoders, section.message_decoders),
-      enum_helpers: combine_non_empty(acc.enum_helpers, section.enum_helpers),
-      service_stubs: combine_non_empty(acc.service_stubs, section.service_stubs),
-    )
-  })
+fn combine_content_sections(
+  all_sections: List(ContentSections),
+) -> ContentSections {
+  list.fold(
+    all_sections,
+    ContentSections("", "", "", "", "", ""),
+    fn(acc, section) {
+      ContentSections(
+        enum_types: combine_non_empty(acc.enum_types, section.enum_types),
+        message_types: combine_non_empty(
+          acc.message_types,
+          section.message_types,
+        ),
+        message_encoders: combine_non_empty(
+          acc.message_encoders,
+          section.message_encoders,
+        ),
+        message_decoders: combine_non_empty(
+          acc.message_decoders,
+          section.message_decoders,
+        ),
+        enum_helpers: combine_non_empty(acc.enum_helpers, section.enum_helpers),
+        service_stubs: combine_non_empty(
+          acc.service_stubs,
+          section.service_stubs,
+        ),
+      )
+    },
+  )
 }
 
 fn combine_non_empty(left: String, right: String) -> String {
@@ -568,7 +542,7 @@ fn get_field_well_known_types(message: parser.Message) -> List(String) {
   list.append(field_types, oneof_types)
 }
 
-fn is_well_known_type(type_name: String) -> Bool {
+pub fn is_well_known_type(type_name: String) -> Bool {
   case type_name {
     // Fully qualified names
     "google.protobuf.Timestamp"
@@ -578,19 +552,37 @@ fn is_well_known_type(type_name: String) -> Bool {
     | "google.protobuf.Any"
     | "google.protobuf.Struct"
     | "google.protobuf.StringValue"
-    // Flattened names (what the parser might use after resolution)
-    | "Timestamp"
+    | "google.protobuf.Type"
+    | "google.protobuf.Field"
+    | "google.protobuf.Enum"
+    | "google.protobuf.EnumValue"
+    | "google.protobuf.Option"
+    | "google.protobuf.SourceContext"
+    | "google.protobuf.Api"
+    | "google.protobuf.Method"
+    | "google.protobuf.Mixin"
+    | // Flattened names (what the parser might use after resolution)
+      "Timestamp"
     | "Duration"
     | "FieldMask"
     | "Empty"
     | "Any"
     | "Struct"
-    | "StringValue" -> True
+    | "StringValue"
+    | "Type"
+    | "Field"
+    | "Enum"
+    | "EnumValue"
+    | "Option"
+    | "SourceContext"
+    | "Api"
+    | "Method"
+    | "Mixin" -> True
     _ -> False
   }
 }
 
-fn generate_well_known_type_definition(type_name: String) -> String {
+pub fn generate_well_known_type_definition(type_name: String) -> String {
   case type_name {
     // Fully qualified names
     "google.protobuf.Timestamp" | "Timestamp" -> generate_timestamp_definition()
@@ -599,7 +591,18 @@ fn generate_well_known_type_definition(type_name: String) -> String {
     "google.protobuf.Empty" | "Empty" -> generate_empty_definition()
     "google.protobuf.Any" | "Any" -> generate_any_definition()
     "google.protobuf.Struct" | "Struct" -> generate_struct_definition()
-    "google.protobuf.StringValue" | "StringValue" -> generate_stringvalue_definition()
+    "google.protobuf.StringValue" | "StringValue" ->
+      generate_stringvalue_definition()
+    "google.protobuf.Type" | "Type" -> generate_type_definition()
+    "google.protobuf.Field" | "Field" -> generate_field_definition()
+    "google.protobuf.Enum" | "Enum" -> generate_enum_definition()
+    "google.protobuf.EnumValue" | "EnumValue" -> generate_enumvalue_definition()
+    "google.protobuf.Option" | "Option" -> generate_option_definition()
+    "google.protobuf.SourceContext" | "SourceContext" ->
+      generate_sourcecontext_definition()
+    "google.protobuf.Api" | "Api" -> generate_api_definition()
+    "google.protobuf.Method" | "Method" -> generate_method_definition()
+    "google.protobuf.Mixin" | "Mixin" -> generate_mixin_definition()
     _ -> ""
   }
 }
@@ -933,3 +936,410 @@ fn get_streaming_comment(
   }
   base_type
 }
+
+// New well-known type definitions
+
+fn generate_type_definition() -> String {
+  let lines = [
+    "pub type Syntax {",
+    "  SYNTAX_PROTO2",
+    "  SYNTAX_PROTO3",
+    "  SYNTAX_EDITIONS",
+    "}",
+    "",
+    "pub type Type {",
+    "  Type(",
+    "    name: String,",
+    "    fields: List(Field),",
+    "    oneofs: List(String),",
+    "    options: List(Option),",
+    "    source_context: option.Option(SourceContext),",
+    "    syntax: Syntax,",
+    "    edition: String,",
+    "  )",
+    "}",
+    "",
+    "pub fn encode_type(type_def: Type) -> BitArray {",
+    "  encode.message([",
+    "    encode.string_field(1, type_def.name),",
+    "    // Simplified: skip complex nested fields for now",
+    "    encode.enum_field(6, encode_syntax_value(type_def.syntax)),",
+    "    encode.string_field(7, type_def.edition),",
+    "  ])",
+    "}",
+    "",
+    "pub fn type_decoder() -> decode.Decoder(Type) {",
+    "  use name <- decode.then(decode.string_with_default(1, \"\"))",
+    "  use fields <- decode.then(decode.repeated_field(2, fn(_) { Ok([]) }))",
+    "  use oneofs <- decode.then(decode.repeated_string(3))",
+    "  use options <- decode.then(decode.repeated_field(4, fn(_) { Ok([]) }))",
+    "  use source_context <- decode.then(decode.optional_nested_message(5, sourcecontext_decoder()))",
+    "  use syntax <- decode.then(decode.enum_field(6, decode_syntax_field()))",
+    "  use edition <- decode.then(decode.string_with_default(7, \"\"))",
+    "  decode.success(Type(",
+    "    name: name,",
+    "    fields: fields,",
+    "    oneofs: oneofs,",
+    "    options: options,",
+    "    source_context: source_context,",
+    "    syntax: syntax,",
+    "    edition: edition,",
+    "  ))",
+    "}",
+    "",
+    "fn encode_syntax_value(syntax: Syntax) -> Int {",
+    "  case syntax {",
+    "    SYNTAX_PROTO2 -> 0",
+    "    SYNTAX_PROTO3 -> 1",
+    "    SYNTAX_EDITIONS -> 2",
+    "  }",
+    "}",
+    "",
+    "fn decode_syntax_field() -> decode.Decoder(Syntax) {",
+    "  decode.field(0, fn(field) {",
+    "    use value <- result.try(decode.int32_field(field))",
+    "    case value {",
+    "      0 -> Ok(SYNTAX_PROTO2)",
+    "      1 -> Ok(SYNTAX_PROTO3)",
+    "      2 -> Ok(SYNTAX_EDITIONS)",
+    "      _ -> Error(decode.DecodeError(expected: \"valid syntax value\", found: \"Unknown syntax value: \" <> string.inspect(value), path: []))",
+    "    }",
+    "  })",
+    "}",
+  ]
+  string.join(lines, "\n")
+}
+
+fn generate_field_definition() -> String {
+  let lines = [
+    "pub type FieldKind {",
+    "  TYPE_UNKNOWN",
+    "  TYPE_DOUBLE",
+    "  TYPE_FLOAT",
+    "  TYPE_INT64",
+    "  TYPE_UINT64",
+    "  TYPE_INT32",
+    "  TYPE_FIXED64",
+    "  TYPE_FIXED32",
+    "  TYPE_BOOL",
+    "  TYPE_STRING",
+    "  TYPE_GROUP",
+    "  TYPE_MESSAGE",
+    "  TYPE_BYTES",
+    "  TYPE_UINT32",
+    "  TYPE_ENUM",
+    "  TYPE_SFIXED32",
+    "  TYPE_SFIXED64",
+    "  TYPE_SINT32",
+    "  TYPE_SINT64",
+    "}",
+    "",
+    "pub type FieldCardinality {",
+    "  CARDINALITY_UNKNOWN",
+    "  CARDINALITY_OPTIONAL",
+    "  CARDINALITY_REQUIRED",
+    "  CARDINALITY_REPEATED",
+    "}",
+    "",
+    "pub type Field {",
+    "  Field(",
+    "    kind: FieldKind,",
+    "    cardinality: FieldCardinality,",
+    "    number: Int,",
+    "    name: String,",
+    "    type_url: String,",
+    "    oneof_index: Int,",
+    "    packed: Bool,",
+    "    options: List(Option),",
+    "    json_name: String,",
+    "    default_value: String,",
+    "  )",
+    "}",
+    "",
+    "pub fn encode_field(field: Field) -> BitArray {",
+    "  encode.message([",
+    "    encode.enum_field(1, encode_fieldkind_value(field.kind)),",
+    "    encode.enum_field(2, encode_fieldcardinality_value(field.cardinality)),",
+    "    encode.int32_field(3, field.number),",
+    "    encode.string_field(4, field.name),",
+    "    encode.string_field(6, field.type_url),",
+    "    encode.int32_field(7, field.oneof_index),",
+    "    encode.bool_field(8, field.packed),",
+    "    encode.string_field(10, field.json_name),",
+    "    encode.string_field(11, field.default_value),",
+    "  ])",
+    "}",
+    "",
+    "pub fn field_decoder() -> decode.Decoder(Field) {",
+    "  use kind <- decode.then(decode.enum_field(1, decode_fieldkind_field))",
+    "  use cardinality <- decode.then(decode.enum_field(2, decode_fieldcardinality_field))",
+    "  use number <- decode.then(decode.int32_with_default(3, 0))",
+    "  use name <- decode.then(decode.string_with_default(4, \"\"))",
+    "  use type_url <- decode.then(decode.string_with_default(6, \"\"))",
+    "  use oneof_index <- decode.then(decode.int32_with_default(7, 0))",
+    "  use packed <- decode.then(decode.bool_with_default(8, False))",
+    "  use options <- decode.then(decode.repeated_field(9, fn(_) { Ok([]) }))",
+    "  use json_name <- decode.then(decode.string_with_default(10, \"\"))",
+    "  use default_value <- decode.then(decode.string_with_default(11, \"\"))",
+    "  decode.success(Field(",
+    "    kind: kind,",
+    "    cardinality: cardinality,",
+    "    number: number,",
+    "    name: name,",
+    "    type_url: type_url,",
+    "    oneof_index: oneof_index,",
+    "    packed: packed,",
+    "    options: options,",
+    "    json_name: json_name,",
+    "    default_value: default_value,",
+    "  ))",
+    "}",
+  ]
+  string.join(lines, "\n")
+}
+
+fn generate_enum_definition() -> String {
+  let lines = [
+    "pub type Enum {",
+    "  Enum(",
+    "    name: String,",
+    "    enumvalue: List(EnumValue),",
+    "    options: List(Option),",
+    "    source_context: option.Option(SourceContext),",
+    "    syntax: Syntax,",
+    "    edition: String,",
+    "  )",
+    "}",
+    "",
+    "pub fn encode_enum(enum_def: Enum) -> BitArray {",
+    "  encode.message([",
+    "    encode.string_field(1, enum_def.name),",
+    "    // Simplified implementation",
+    "    encode.enum_field(5, encode_syntax_value(enum_def.syntax)),",
+    "    encode.string_field(6, enum_def.edition),",
+    "  ])",
+    "}",
+    "",
+    "pub fn enum_decoder() -> decode.Decoder(Enum) {",
+    "  use name <- decode.then(decode.string_with_default(1, \"\"))",
+    "  use enumvalue <- decode.then(decode.repeated_field(2, fn(_) { Ok([]) }))",
+    "  use options <- decode.then(decode.repeated_field(3, fn(_) { Ok([]) }))",
+    "  use source_context <- decode.then(decode.optional_nested_message(4, sourcecontext_decoder()))",
+    "  use syntax <- decode.then(decode.enum_field(5, decode_syntax_field))",
+    "  use edition <- decode.then(decode.string_with_default(6, \"\"))",
+    "  decode.success(Enum(",
+    "    name: name,",
+    "    enumvalue: enumvalue,",
+    "    options: options,",
+    "    source_context: source_context,",
+    "    syntax: syntax,",
+    "    edition: edition,",
+    "  ))",
+    "}",
+  ]
+  string.join(lines, "\n")
+}
+
+fn generate_enumvalue_definition() -> String {
+  let lines = [
+    "pub type EnumValue {",
+    "  EnumValue(",
+    "    name: String,",
+    "    number: Int,",
+    "    options: List(Option),",
+    "  )",
+    "}",
+    "",
+    "pub fn encode_enumvalue(enumvalue: EnumValue) -> BitArray {",
+    "  encode.message([",
+    "    encode.string_field(1, enumvalue.name),",
+    "    encode.int32_field(2, enumvalue.number),",
+    "  ])",
+    "}",
+    "",
+    "pub fn enumvalue_decoder() -> decode.Decoder(EnumValue) {",
+    "  use name <- decode.then(decode.string_with_default(1, \"\"))",
+    "  use number <- decode.then(decode.int32_with_default(2, 0))",
+    "  use options <- decode.then(decode.repeated_field(3, fn(_) { Ok([]) }))",
+    "  decode.success(EnumValue(",
+    "    name: name,",
+    "    number: number,",
+    "    options: options,",
+    "  ))",
+    "}",
+  ]
+  string.join(lines, "\n")
+}
+
+fn generate_option_definition() -> String {
+  let lines = [
+    "pub type Option {",
+    "  Option(",
+    "    name: String,",
+    "    value: Any,",
+    "  )",
+    "}",
+    "",
+    "pub fn encode_option(option_def: Option) -> BitArray {",
+    "  encode.message([",
+    "    encode.string_field(1, option_def.name),",
+    "    encode.field(2, wire.LengthDelimited, encode_any(option_def.value)),",
+    "  ])",
+    "}",
+    "",
+    "pub fn option_decoder() -> decode.Decoder(Option) {",
+    "  use name <- decode.then(decode.string_with_default(1, \"\"))",
+    "  use value <- decode.then(decode.nested_message(2, any_decoder()))",
+    "  decode.success(Option(",
+    "    name: name,",
+    "    value: value,",
+    "  ))",
+    "}",
+  ]
+  string.join(lines, "\n")
+}
+
+fn generate_sourcecontext_definition() -> String {
+  let lines = [
+    "pub type SourceContext {",
+    "  SourceContext(",
+    "    file_name: String,",
+    "  )",
+    "}",
+    "",
+    "pub fn encode_sourcecontext(sourcecontext: SourceContext) -> BitArray {",
+    "  encode.message([",
+    "    encode.string_field(1, sourcecontext.file_name),",
+    "  ])",
+    "}",
+    "",
+    "pub fn sourcecontext_decoder() -> decode.Decoder(SourceContext) {",
+    "  use file_name <- decode.then(decode.string_with_default(1, \"\"))",
+    "  decode.success(SourceContext(",
+    "    file_name: file_name,",
+    "  ))",
+    "}",
+  ]
+  string.join(lines, "\n")
+}
+
+fn generate_api_definition() -> String {
+  let lines = [
+    "pub type Api {",
+    "  Api(",
+    "    name: String,",
+    "    methods: List(Method),",
+    "    options: List(Option),",
+    "    version: String,",
+    "    source_context: option.Option(SourceContext),",
+    "    mixins: List(Mixin),",
+    "    syntax: Syntax,",
+    "  )",
+    "}",
+    "",
+    "pub fn encode_api(api: Api) -> BitArray {",
+    "  encode.message([",
+    "    encode.string_field(1, api.name),",
+    "    encode.string_field(4, api.version),",
+    "    encode.enum_field(7, encode_syntax_value(api.syntax)),",
+    "  ])",
+    "}",
+    "",
+    "pub fn api_decoder() -> decode.Decoder(Api) {",
+    "  use name <- decode.then(decode.string_with_default(1, \"\"))",
+    "  use methods <- decode.then(decode.repeated_field(2, fn(_) { Ok([]) }))",
+    "  use options <- decode.then(decode.repeated_field(3, fn(_) { Ok([]) }))",
+    "  use version <- decode.then(decode.string_with_default(4, \"\"))",
+    "  use source_context <- decode.then(decode.optional_nested_message(5, sourcecontext_decoder()))",
+    "  use mixins <- decode.then(decode.repeated_field(6, fn(_) { Ok([]) }))",
+    "  use syntax <- decode.then(decode.enum_field(7, decode_syntax_field))",
+    "  decode.success(Api(",
+    "    name: name,",
+    "    methods: methods,",
+    "    options: options,",
+    "    version: version,",
+    "    source_context: source_context,",
+    "    mixins: mixins,",
+    "    syntax: syntax,",
+    "  ))",
+    "}",
+  ]
+  string.join(lines, "\n")
+}
+
+fn generate_method_definition() -> String {
+  let lines = [
+    "pub type Method {",
+    "  Method(",
+    "    name: String,",
+    "    request_type_url: String,",
+    "    request_streaming: Bool,",
+    "    response_type_url: String,",
+    "    response_streaming: Bool,",
+    "    options: List(Option),",
+    "    syntax: Syntax,",
+    "  )",
+    "}",
+    "",
+    "pub fn encode_method(method: Method) -> BitArray {",
+    "  encode.message([",
+    "    encode.string_field(1, method.name),",
+    "    encode.string_field(2, method.request_type_url),",
+    "    encode.bool_field(3, method.request_streaming),",
+    "    encode.string_field(4, method.response_type_url),",
+    "    encode.bool_field(5, method.response_streaming),",
+    "    encode.enum_field(7, encode_syntax_value(method.syntax)),",
+    "  ])",
+    "}",
+    "",
+    "pub fn method_decoder() -> decode.Decoder(Method) {",
+    "  use name <- decode.then(decode.string_with_default(1, \"\"))",
+    "  use request_type_url <- decode.then(decode.string_with_default(2, \"\"))",
+    "  use request_streaming <- decode.then(decode.bool_with_default(3, False))",
+    "  use response_type_url <- decode.then(decode.string_with_default(4, \"\"))",
+    "  use response_streaming <- decode.then(decode.bool_with_default(5, False))",
+    "  use options <- decode.then(decode.repeated_field(6, fn(_) { Ok([]) }))",
+    "  use syntax <- decode.then(decode.enum_field(7, decode_syntax_field))",
+    "  decode.success(Method(",
+    "    name: name,",
+    "    request_type_url: request_type_url,",
+    "    request_streaming: request_streaming,",
+    "    response_type_url: response_type_url,",
+    "    response_streaming: response_streaming,",
+    "    options: options,",
+    "    syntax: syntax,",
+    "  ))",
+    "}",
+  ]
+  string.join(lines, "\n")
+}
+
+fn generate_mixin_definition() -> String {
+  let lines = [
+    "pub type Mixin {",
+    "  Mixin(",
+    "    name: String,",
+    "    root: String,",
+    "  )",
+    "}",
+    "",
+    "pub fn encode_mixin(mixin: Mixin) -> BitArray {",
+    "  encode.message([",
+    "    encode.string_field(1, mixin.name),",
+    "    encode.string_field(2, mixin.root),",
+    "  ])",
+    "}",
+    "",
+    "pub fn mixin_decoder() -> decode.Decoder(Mixin) {",
+    "  use name <- decode.then(decode.string_with_default(1, \"\"))",
+    "  use root <- decode.then(decode.string_with_default(2, \"\"))",
+    "  decode.success(Mixin(",
+    "    name: name,",
+    "    root: root,",
+    "  ))",
+    "}",
+  ]
+  string.join(lines, "\n")
+}
+// Note: Enum helpers are generated directly in the string output above
+// since they reference generated types that don't exist in this module scope

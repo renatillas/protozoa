@@ -117,7 +117,9 @@ fn extract_imports(
 fn discover_project_structure() -> Result(#(String, String)) {
   use name <- result.try(
     project.name()
-    |> result.map_error(fn(_) { snag.new("Project name not found in gleam.toml") }),
+    |> result.map_error(fn(_) {
+      snag.new("Project name not found in gleam.toml")
+    }),
   )
 
   let proto_dir = filepath.join(project.src(), name <> "/proto")
@@ -132,7 +134,6 @@ fn discover_project_structure() -> Result(#(String, String)) {
     False -> snag.error("No proto files found")
   }
 }
-
 
 fn run_generate(
   input: String,

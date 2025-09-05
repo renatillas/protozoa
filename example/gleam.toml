@@ -1,0 +1,14 @@
+name = "protozoa_example"
+version = "1.0.0"
+description = "Example project demonstrating Protozoa Protocol Buffer library usage"
+
+gleam = ">= 1.5.0"
+
+[dependencies]
+gleam_stdlib = ">= 0.34.0 and < 2.0.0"
+# Protozoa will be loaded from parent directory
+protozoa = { path = "../" }
+
+[dev-dependencies]
+gleeunit = ">= 1.0.0 and < 2.0.0"
+

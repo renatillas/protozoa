@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package example;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+
+// Simple user message demonstrating basic types and well-known types
+message User {
+  int32 id = 1;
+  string name = 2;
+  string email = 3;
+  google.protobuf.Timestamp created_at = 4;
+  bool is_active = 5;
+  UserRole role = 6;
+  repeated string tags = 7;
+  google.protobuf.StringValue bio = 8;
+}
+
+enum UserRole {
+  UNKNOWN = 0;
+  ADMIN = 1;
+  USER = 2;
+  GUEST = 3;
+}
+
+// Simple message with oneof
+message SimpleMessage {
+  string id = 1;
+  
+  oneof data {
+    string text_data = 2;
+    int64 numeric_data = 3;
+    bytes binary_data = 4;
+  }
+  
+  string description = 5;
+  bool enabled = 6;
+}

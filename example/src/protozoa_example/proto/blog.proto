@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package example;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/any.proto";
+import "user.proto";
+
+// Blog post demonstrating nested messages and repeated fields
+message BlogPost {
+  int32 id = 1;
+  string title = 2;
+  string content = 3;
+  User author = 4;
+  google.protobuf.Timestamp published_at = 5;
+  repeated string categories = 6;
+  repeated Comment comments = 7;
+  PostStatus status = 8;
+  google.protobuf.Any metadata = 9;
+  map<string, string> attributes = 10;
+}
+
+// Nested message
+message Comment {
+  int32 id = 1;
+  string content = 2;
+  User author = 3;
+  google.protobuf.Timestamp created_at = 4;
+  repeated Comment replies = 5;
+}
+
+// Another enum
+enum PostStatus {
+  DRAFT = 0;
+  PUBLISHED = 1;
+  ARCHIVED = 2;
+  DELETED = 3;
+}

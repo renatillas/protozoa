@@ -12,74 +12,6 @@ import protozoa/decode
 import protozoa/encode
 import protozoa/wire
 
-pub type FieldMask {
-  FieldMask(
-    paths: List(String),
-  )
-}
-
-pub fn encode_fieldmask(fieldmask: FieldMask) -> BitArray {
-  let paths_fields = list.map(fieldmask.paths, fn(v) { encode.string_field(1, v) })
-  encode.message(paths_fields)
-}
-
-pub fn fieldmask_decoder() -> decode.Decoder(FieldMask) {
-  use paths <- decode.then(decode.repeated_string(1))
-  decode.success(FieldMask(paths: paths))
-}
-
-pub type Duration {
-  Duration(
-    seconds: Int,
-    nanos: Int,
-  )
-}
-
-pub fn encode_duration(duration: Duration) -> BitArray {
-  encode.message([
-    encode.int64_field(1, duration.seconds),
-    encode.int32_field(2, duration.nanos),
-  ])
-}
-
-pub fn duration_decoder() -> decode.Decoder(Duration) {
-  use seconds <- decode.then(decode.int64_with_default(1, 0))
-  use nanos <- decode.then(decode.int32_with_default(2, 0))
-  decode.success(Duration(seconds: seconds, nanos: nanos))
-}
-
-pub type Timestamp {
-  Timestamp(
-    seconds: Int,
-    nanos: Int,
-  )
-}
-
-pub fn encode_timestamp(timestamp: Timestamp) -> BitArray {
-  encode.message([
-    encode.int64_field(1, timestamp.seconds),
-    encode.int32_field(2, timestamp.nanos),
-  ])
-}
-
-pub fn timestamp_decoder() -> decode.Decoder(Timestamp) {
-  use seconds <- decode.then(decode.int64_with_default(1, 0))
-  use nanos <- decode.then(decode.int32_with_default(2, 0))
-  decode.success(Timestamp(seconds: seconds, nanos: nanos))
-}
-
-pub type Empty {
-  Empty
-}
-
-pub fn encode_empty(_empty: Empty) -> BitArray {
-  encode.message([])
-}
-
-pub fn empty_decoder() -> decode.Decoder(Empty) {
-  decode.success(Empty)
-}
-
 pub type EventMessage {
   EventMessage(
     event_name: String,
@@ -100,13 +32,37 @@ pub type ServiceResponse {
   )
 }
 
+pub type Duration {
+  Duration(
+    seconds: Int,
+    nanos: Int,
+  )
+}
+
+pub type Empty {
+  Empty
+}
+
+pub type FieldMask {
+  FieldMask(
+    paths: List(String),
+  )
+}
+
+pub type Timestamp {
+  Timestamp(
+    seconds: Int,
+    nanos: Int,
+  )
+}
+
 pub fn encode_serviceresponse(serviceresponse: ServiceResponse) -> BitArray {
   encode.message([
     case serviceresponse.response {
       Some(oneof_value) -> {
         case oneof_value {
-      Data(value) -> encode.field(1, wire.LengthDelimited, encode_eventmessage(value))
-      EmptyData(value) -> encode.field(2, wire.LengthDelimited, encode_empty(value))
+      Data(value) -> encode.field(1, wire.LengthDelimited, encode.length_delimited(encode_eventmessage(value)))
+      EmptyData(value) -> encode.field(2, wire.LengthDelimited, encode.length_delimited(encode_empty(value)))
         }
       }
       None -> <<>>
@@ -117,9 +73,32 @@ pub fn encode_serviceresponse(serviceresponse: ServiceResponse) -> BitArray {
 pub fn encode_eventmessage(eventmessage: EventMessage) -> BitArray {
   encode.message([
     encode.string_field(1, eventmessage.event_name),
-    encode.field(2, wire.LengthDelimited, encode_timestamp(eventmessage.occurred_at)),
-    encode.field(3, wire.LengthDelimited, encode_duration(eventmessage.duration)),
-    encode.field(4, wire.LengthDelimited, encode_fieldmask(eventmessage.update_mask)),
+    encode.field(2, wire.LengthDelimited, encode.length_delimited(encode_timestamp(eventmessage.occurred_at))),
+    encode.field(3, wire.LengthDelimited, encode.length_delimited(encode_duration(eventmessage.duration))),
+    encode.field(4, wire.LengthDelimited, encode.length_delimited(encode_fieldmask(eventmessage.update_mask))),
+  ])
+}
+
+pub fn encode_duration(duration: Duration) -> BitArray {
+  encode.message([
+    encode.int64_field(1, duration.seconds),
+    encode.int32_field(2, duration.nanos),
+  ])
+}
+
+pub fn encode_empty(_empty: Empty) -> BitArray {
+  encode.message([])
+}
+
+pub fn encode_fieldmask(fieldmask: FieldMask) -> BitArray {
+  let paths_fields = list.map(fieldmask.paths, fn(v) { encode.string_field(1, v) })
+  encode.message(paths_fields)
+}
+
+pub fn encode_timestamp(timestamp: Timestamp) -> BitArray {
+  encode.message([
+    encode.int64_field(1, timestamp.seconds),
+    encode.int32_field(2, timestamp.nanos),
   ])
 }
 
@@ -176,4 +155,41 @@ pub fn eventmessage_decoder() -> decode.Decoder(EventMessage) {
 
 pub fn decode_eventmessage(data: BitArray) -> Result(EventMessage, List(decode.DecodeError)) {
   decode.run(data, eventmessage_decoder())
+}
+
+pub fn duration_decoder() -> decode.Decoder(Duration) {
+  use seconds <- decode.then(decode.int64_with_default(1, 0))
+  use nanos <- decode.then(decode.int32_with_default(2, 0))
+  decode.success(Duration(seconds: seconds, nanos: nanos))
+}
+
+pub fn decode_duration(data: BitArray) -> Result(Duration, List(decode.DecodeError)) {
+  decode.run(data, duration_decoder())
+}
+
+pub fn empty_decoder() -> decode.Decoder(Empty) {
+  decode.success(Empty)
+}
+
+pub fn decode_empty(data: BitArray) -> Result(Empty, List(decode.DecodeError)) {
+  decode.run(data, empty_decoder())
+}
+
+pub fn fieldmask_decoder() -> decode.Decoder(FieldMask) {
+  use paths <- decode.then(decode.repeated_string(1))
+  decode.success(FieldMask(paths: paths))
+}
+
+pub fn decode_fieldmask(data: BitArray) -> Result(FieldMask, List(decode.DecodeError)) {
+  decode.run(data, fieldmask_decoder())
+}
+
+pub fn timestamp_decoder() -> decode.Decoder(Timestamp) {
+  use seconds <- decode.then(decode.int64_with_default(1, 0))
+  use nanos <- decode.then(decode.int32_with_default(2, 0))
+  decode.success(Timestamp(seconds: seconds, nanos: nanos))
+}
+
+pub fn decode_timestamp(data: BitArray) -> Result(Timestamp, List(decode.DecodeError)) {
+  decode.run(data, timestamp_decoder())
 }

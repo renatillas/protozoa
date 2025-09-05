@@ -140,7 +140,8 @@ fn generate_map_field_decoder(
     parser.String -> "decode.string_with_default(" <> field_num <> ", \"\")"
     parser.Int32 -> "decode.int32_with_default(" <> field_num <> ", 0)"
     parser.Bool -> "decode.bool_with_default(" <> field_num <> ", False)"
-    parser.MessageType("Value") -> "decode.nested_message(" <> field_num <> ", value_decoder())"
+    parser.MessageType("Value") ->
+      "decode.nested_message(" <> field_num <> ", value_decoder())"
     parser.MessageType(name) -> {
       let decoder_name = string.lowercase(flatten_type_name(name)) <> "_decoder"
       "decode.nested_message(" <> field_num <> ", " <> decoder_name <> "())"

@@ -197,7 +197,7 @@ fn generate_oneof_type(
       let variant_name = case base_variant_name, gleam_type {
         "Empty", "Empty" -> "EmptyData"
         "StringValue", "String" -> "StringValueVariant"
-        "BoolValue", "Bool" -> "BoolValueVariant" 
+        "BoolValue", "Bool" -> "BoolValueVariant"
         "ListValue", "ListValue" -> "ListValueVariant"
         name, _ -> name
       }
