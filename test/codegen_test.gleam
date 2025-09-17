@@ -1,7 +1,7 @@
 import glance
 import gleam/string
 import gleeunit
-import protozoa/codegen
+import protozoa/internal/codegen
 import protozoa/parser
 import simplifile
 

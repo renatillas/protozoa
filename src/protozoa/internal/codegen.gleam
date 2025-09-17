@@ -1341,5 +1341,3 @@ fn generate_mixin_definition() -> String {
   ]
   string.join(lines, "\n")
 }
-// Note: Enum helpers are generated directly in the string output above
-// since they reference generated types that don't exist in this module scope

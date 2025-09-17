@@ -3,7 +3,7 @@ import gleam/list
 import gleam/option.{Some}
 import gleam/string
 import gleeunit
-import protozoa/codegen
+import protozoa/internal/codegen
 import protozoa/internal/import_resolver
 import protozoa/internal/type_registry
 import protozoa/internal/well_known_types

@@ -1,6 +1,6 @@
 import gleam/string
 import gleeunit
-import protozoa/codegen
+import protozoa/internal/codegen
 
 pub fn main() {
   gleeunit.main()

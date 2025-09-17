@@ -9,10 +9,10 @@ import gleam/io
 import gleam/list
 import gleam/result
 import gleam/string
-import protozoa/codegen
+import protozoa/internal/codegen
 import protozoa/internal/import_resolver
+import protozoa/internal/project
 import protozoa/parser
-import protozoa/project
 import simplifile
 import snag.{type Result}
 
