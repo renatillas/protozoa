@@ -1,0 +1,9 @@
+
+syntax = "proto3";
+
+message ProblematicMessage {
+  // Using reserved keywords that might cause issues in generated code
+  string import = 1;
+  string type = 2;  
+  string fn = 3;
+}

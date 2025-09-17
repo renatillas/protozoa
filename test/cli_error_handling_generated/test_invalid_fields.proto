@@ -1,0 +1,7 @@
+
+syntax = "proto3";
+
+message InvalidFields {
+  string field_zero = 0;       // Invalid: field number 0
+  string field_negative = -1;  // Invalid: negative field number  
+}

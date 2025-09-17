@@ -1,0 +1,8 @@
+
+syntax = "proto3";
+
+message MalformedMessage {
+  string field_without_number;  // Missing field number
+  repeated;                     // Invalid syntax
+  map<string> incomplete_map = 2; // Incomplete map definition
+}

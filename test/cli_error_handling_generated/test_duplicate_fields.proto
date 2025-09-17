@@ -1,0 +1,7 @@
+
+syntax = "proto3";
+
+message DuplicateFields {
+  string first_field = 1;
+  int32 second_field = 1;  // Duplicate field number
+}
