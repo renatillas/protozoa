@@ -13,6 +13,7 @@ import protozoa/internal/codegen
 import protozoa/internal/import_resolver
 import protozoa/internal/project
 import protozoa/parser
+import shellout
 import simplifile
 import snag.{type Result}
 
@@ -149,6 +150,11 @@ fn run_generate(
         <> " file(s):",
       )
       list.each(files, fn(f) { io.println("  - " <> f) })
+      case shellout.command(run: "gleam", with: ["format"], in: ".", opt: []) {
+        Ok(_) -> Nil
+        Error(#(_, string)) ->
+          io.println_error("❌ Failed to format files: " <> string)
+      }
     }
     Error(err) -> {
       io.println_error("❌ Generation failed: " <> snag.pretty_print(err))
