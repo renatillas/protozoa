@@ -1,0 +1,71 @@
+---
+version: 1.4.1
+title: Well known type definition: Type
+file: ./test/new_well_known_types_test.gleam
+test_name: generate_type_definition_test
+---
+pub type Syntax {
+  SYNTAX_PROTO2
+  SYNTAX_PROTO3
+  SYNTAX_EDITIONS
+}
+
+pub type Type {
+  Type(
+    name: String,
+    fields: List(Field),
+    oneofs: List(String),
+    options: List(Option),
+    source_context: option.Option(SourceContext),
+    syntax: Syntax,
+    edition: String,
+  )
+}
+
+pub fn encode_type(type_def: Type) -> BitArray {
+  encode.message([
+    encode.string_field(1, type_def.name),
+    // Simplified: skip complex nested fields for now
+    encode.enum_field(6, encode_syntax_value(type_def.syntax)),
+    encode.string_field(7, type_def.edition),
+  ])
+}
+
+pub fn type_decoder() -> decode.Decoder(Type) {
+  use name <- decode.then(decode.string_with_default(1, ""))
+  use fields <- decode.then(decode.repeated_field(2, fn(_) { Ok([]) }))
+  use oneofs <- decode.then(decode.repeated_string(3))
+  use options <- decode.then(decode.repeated_field(4, fn(_) { Ok([]) }))
+  use source_context <- decode.then(decode.optional_nested_message(5, sourcecontext_decoder()))
+  use syntax <- decode.then(decode.enum_field(6, decode_syntax_field()))
+  use edition <- decode.then(decode.string_with_default(7, ""))
+  decode.success(Type(
+    name: name,
+    fields: fields,
+    oneofs: oneofs,
+    options: options,
+    source_context: source_context,
+    syntax: syntax,
+    edition: edition,
+  ))
+}
+
+fn encode_syntax_value(syntax: Syntax) -> Int {
+  case syntax {
+    SYNTAX_PROTO2 -> 0
+    SYNTAX_PROTO3 -> 1
+    SYNTAX_EDITIONS -> 2
+  }
+}
+
+fn decode_syntax_field() -> decode.Decoder(Syntax) {
+  decode.field(0, fn(field) {
+    use value <- result.try(decode.int32_field(field))
+    case value {
+      0 -> Ok(SYNTAX_PROTO2)
+      1 -> Ok(SYNTAX_PROTO3)
+      2 -> Ok(SYNTAX_EDITIONS)
+      _ -> Error(decode.DecodeError(expected: "valid syntax value", found: "Unknown syntax value: " <> string.inspect(value), path: []))
+    }
+  })
+}

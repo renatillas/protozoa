@@ -165,6 +165,15 @@ pub type Import {
   Import(path: String, public: Bool, weak: Bool)
 }
 
+/// Represents HTTP method types for REST-style services
+pub type HttpMethod {
+  Get
+  Post
+  Put
+  Delete
+  Patch
+}
+
 /// Represents an RPC method in a Protocol Buffer service.
 pub type Method {
   Method(
@@ -173,6 +182,8 @@ pub type Method {
     output_type: String,
     client_streaming: Bool,
     server_streaming: Bool,
+    http_method: Option(HttpMethod),
+    http_path: Option(String),
   )
 }
 
@@ -499,40 +510,65 @@ fn extract_body(
     [line, ..rest] -> {
       let trimmed = string.trim(line)
 
-      // Handle closing braces first
-      case string.contains(trimmed, "}") && !string.contains(trimmed, "{") {
-        True -> {
-          // Pure closing brace
+      // Count braces in this line
+      let open_count = count_char(trimmed, "{")
+      let close_count = count_char(trimmed, "}")
+
+      case open_count, close_count {
+        // Pure closing brace (only } and no {)
+        0, n if n > 0 -> {
           case depth {
             0 -> {
-              // This is the closing brace of the message/enum
+              // This is the closing brace of the message/enum/service
               #(list.reverse(body), rest)
             }
             _ -> {
               // This is a closing brace of a nested structure
-              extract_body(rest, [line, ..body], depth - 1)
+              extract_body(rest, [line, ..body], depth - close_count)
             }
           }
         }
-        False -> {
-          // Check for opening braces or regular lines
-          let new_depth = case string.contains(trimmed, "{") {
-            True -> depth + 1
-            False -> depth
+        // Line has opening and closing braces
+        n, m if n > 0 && m > 0 -> {
+          // Check if they're balanced (like in strings: "{id}")
+          case n == m {
+            True -> {
+              // Balanced braces, don't change depth
+              extract_body(rest, [line, ..body], depth)
+            }
+            False -> {
+              // Unbalanced, adjust depth by net difference
+              let net_depth = n - m
+              extract_body(rest, [line, ..body], depth + net_depth)
+            }
           }
-          // Add line and continue
-          extract_body(rest, [line, ..body], new_depth)
+        }
+        // Only opening braces
+        n, 0 if n > 0 -> {
+          extract_body(rest, [line, ..body], depth + open_count)
+        }
+        // No braces
+        _, _ -> {
+          extract_body(rest, [line, ..body], depth)
         }
       }
     }
   }
 }
 
+/// Count occurrences of a character in a string
+fn count_char(text: String, char: String) -> Int {
+  text
+  |> string.to_graphemes
+  |> list.filter(fn(c) { c == char })
+  |> list.length
+}
+
 fn parse_message_body(
   lines: List(String),
-  message_name: String,
+  _message_name: String,
 ) -> Result(#(List(Oneof), List(Field), List(Message), List(Enum)), ParseError) {
-  parse_message_body_helper(lines, [], [], None, [], [], message_name)
+  parse_message_body_helper(lines, [], [], None, [], [])
 }
 
 fn parse_message_body_helper(
@@ -542,7 +578,6 @@ fn parse_message_body_helper(
   current_oneof: Option(#(String, List(Field))),
   messages: List(Message),
   enums: List(Enum),
-  message_name: String,
 ) -> Result(#(List(Oneof), List(Field), List(Message), List(Enum)), ParseError) {
   case lines {
     [] -> {
@@ -576,7 +611,6 @@ fn parse_message_body_helper(
             current_oneof,
             messages,
             enums,
-            message_name,
           )
         _ -> {
           case string.starts_with(trimmed, "oneof ") {
@@ -596,7 +630,6 @@ fn parse_message_body_helper(
                     Some(#(oneof_name, [])),
                     messages,
                     enums,
-                    message_name,
                   )
                 }
                 None -> {
@@ -611,7 +644,6 @@ fn parse_message_body_helper(
                     Some(#(oneof_name, [])),
                     messages,
                     enums,
-                    message_name,
                   )
                 }
               }
@@ -629,7 +661,6 @@ fn parse_message_body_helper(
                         current_oneof,
                         [m, ..messages],
                         enums,
-                        message_name,
                       )
                     None ->
                       parse_message_body_helper(
@@ -639,7 +670,6 @@ fn parse_message_body_helper(
                         current_oneof,
                         messages,
                         enums,
-                        message_name,
                       )
                   }
                 }
@@ -659,7 +689,6 @@ fn parse_message_body_helper(
                             current_oneof,
                             messages,
                             [e, ..enums],
-                            message_name,
                           )
                         None ->
                           parse_message_body_helper(
@@ -669,7 +698,6 @@ fn parse_message_body_helper(
                             current_oneof,
                             messages,
                             enums,
-                            message_name,
                           )
                       }
                     }
@@ -688,7 +716,6 @@ fn parse_message_body_helper(
                                 None,
                                 messages,
                                 enums,
-                                message_name,
                               )
                             }
                             None ->
@@ -699,7 +726,6 @@ fn parse_message_body_helper(
                                 current_oneof,
                                 messages,
                                 enums,
-                                message_name,
                               )
                           }
                         }
@@ -716,7 +742,6 @@ fn parse_message_body_helper(
                                     Some(#(name, [field, ..oneof_fields])),
                                     messages,
                                     enums,
-                                    message_name,
                                   )
                                 }
                                 None -> {
@@ -727,7 +752,6 @@ fn parse_message_body_helper(
                                     current_oneof,
                                     messages,
                                     enums,
-                                    message_name,
                                   )
                                 }
                               }
@@ -1166,13 +1190,78 @@ fn parse_service_blocks(
 fn parse_service_methods(
   body_lines: List(String),
 ) -> Result(List(Method), ParseError) {
-  let method_lines =
-    list.filter(body_lines, fn(line) {
-      let trimmed = string.trim(line)
-      string.starts_with(trimmed, "rpc ")
-    })
+  parse_methods_helper(body_lines, [])
+}
 
-  list.try_map(method_lines, parse_single_method)
+/// Helper to parse methods, handling both single-line and multi-line (with options) methods
+fn parse_methods_helper(
+  lines: List(String),
+  methods: List(Method),
+) -> Result(List(Method), ParseError) {
+  case lines {
+    [] -> Ok(list.reverse(methods))
+    [line, ..rest] -> {
+      let trimmed = string.trim(line)
+      case string.starts_with(trimmed, "rpc ") {
+        True -> {
+          // Check if this is a multi-line method with options block
+          case string.contains(trimmed, "{") && !string.contains(trimmed, "}") {
+            True -> {
+              // Multi-line method with options
+              let #(method_body, remaining) = extract_body(rest, [], 0)
+              case parse_method_with_options(trimmed, method_body) {
+                Ok(method) ->
+                  parse_methods_helper(remaining, [method, ..methods])
+                Error(err) -> Error(err)
+              }
+            }
+            False -> {
+              // Single-line method (old format)
+              case parse_single_method(trimmed) {
+                Ok(method) -> parse_methods_helper(rest, [method, ..methods])
+                Error(err) -> Error(err)
+              }
+            }
+          }
+        }
+        False -> parse_methods_helper(rest, methods)
+      }
+    }
+  }
+}
+
+/// Parse a multi-line RPC method with options block
+fn parse_method_with_options(
+  signature_line: String,
+  body_lines: List(String),
+) -> Result(Method, ParseError) {
+  // Remove "rpc " prefix and extract signature
+  let signature =
+    signature_line
+    |> string.replace("rpc ", "")
+    |> string.replace(" {", "")
+    |> string.trim()
+
+  case parse_method_signature(signature) {
+    Ok(#(name, input_type, output_type, client_streaming, server_streaming)) -> {
+      // Try to extract HTTP annotations from body
+      let #(http_method, http_path) = case extract_http_annotation(body_lines) {
+        Some(#(method, path)) -> #(Some(method), Some(path))
+        None -> infer_http_metadata(name)
+      }
+
+      Ok(Method(
+        name: name,
+        input_type: input_type,
+        output_type: output_type,
+        client_streaming: client_streaming,
+        server_streaming: server_streaming,
+        http_method: http_method,
+        http_path: http_path,
+      ))
+    }
+    Error(_) -> Error(MalformedField(signature_line))
+  }
 }
 
 /// Parse a single RPC method definition
@@ -1186,12 +1275,16 @@ fn parse_single_method(line: String) -> Result(Method, ParseError) {
       let combined = string.join(rest_parts, " ")
       case parse_method_signature(combined) {
         Ok(#(name, input_type, output_type, client_streaming, server_streaming)) -> {
+          // Infer HTTP method and path from method name
+          let #(http_method, http_path) = infer_http_metadata(name)
           Ok(Method(
             name: name,
             input_type: input_type,
             output_type: output_type,
             client_streaming: client_streaming,
             server_streaming: server_streaming,
+            http_method: http_method,
+            http_path: http_path,
           ))
         }
         Error(_) -> Error(MalformedField(line))
@@ -1199,6 +1292,145 @@ fn parse_single_method(line: String) -> Result(Method, ParseError) {
     }
     _ -> Error(MalformedField(line))
   }
+}
+
+/// Extract HTTP annotation from method body lines
+/// Looks for: option (google.api.http) = { get: "/path" };
+fn extract_http_annotation(lines: List(String)) -> Option(#(HttpMethod, String)) {
+  // Find the option line
+  case
+    list.find(lines, fn(line) {
+      let trimmed = string.trim(line)
+      string.contains(trimmed, "option")
+      && string.contains(trimmed, "google.api.http")
+    })
+  {
+    Ok(_) -> {
+      // Look for HTTP method and path in this line and following lines
+      parse_http_option_block(lines)
+    }
+    Error(_) -> None
+  }
+}
+
+/// Parse HTTP option block to extract method and path
+/// Handles formats like:
+///   get: "/v1/temperatures/{id}"
+///   post: "/v1/temperatures"
+fn parse_http_option_block(lines: List(String)) -> Option(#(HttpMethod, String)) {
+  // Combine all lines into single string for easier parsing
+  let combined = string.join(lines, " ")
+
+  // Try to find each HTTP method
+  case find_http_method_and_path(combined, "get:") {
+    Some(path) -> Some(#(Get, path))
+    None ->
+      case find_http_method_and_path(combined, "post:") {
+        Some(path) -> Some(#(Post, path))
+        None ->
+          case find_http_method_and_path(combined, "put:") {
+            Some(path) -> Some(#(Put, path))
+            None ->
+              case find_http_method_and_path(combined, "delete:") {
+                Some(path) -> Some(#(Delete, path))
+                None ->
+                  case find_http_method_and_path(combined, "patch:") {
+                    Some(path) -> Some(#(Patch, path))
+                    None -> None
+                  }
+              }
+          }
+      }
+  }
+}
+
+/// Find HTTP method and extract path from option string
+fn find_http_method_and_path(
+  text: String,
+  method_prefix: String,
+) -> Option(String) {
+  case string.split_once(text, method_prefix) {
+    Ok(#(_, after_method)) -> {
+      // Extract path between quotes
+      case string.split_once(after_method, "\"") {
+        Ok(#(_, after_first_quote)) -> {
+          case string.split_once(after_first_quote, "\"") {
+            Ok(#(path, _)) -> Some(string.trim(path))
+            Error(_) -> None
+          }
+        }
+        Error(_) -> None
+      }
+    }
+    Error(_) -> None
+  }
+}
+
+/// Infer HTTP method and path from RPC method name
+/// Examples:
+///   GetUser -> (Get, "/api/v1/users/{id}")
+///   CreateUser -> (Post, "/api/v1/users")
+///   ListUsers -> (Get, "/api/v1/users")
+///   DeleteUser -> (Delete, "/api/v1/users/{id}")
+///   UpdateUser -> (Put, "/api/v1/users/{id}")
+fn infer_http_metadata(
+  method_name: String,
+) -> #(Option(HttpMethod), Option(String)) {
+  let lower = string.lowercase(method_name)
+
+  case string.slice(lower, 0, 6) {
+    "create" -> {
+      let resource = extract_resource_name(method_name, "Create")
+      #(Some(Post), Some("/api/v1/" <> resource))
+    }
+    _ -> {
+      case string.slice(lower, 0, 6) {
+        "update" -> {
+          let resource = extract_resource_name(method_name, "Update")
+          #(Some(Put), Some("/api/v1/" <> resource <> "/{id}"))
+        }
+        _ -> {
+          case string.slice(lower, 0, 6) {
+            "delete" -> {
+              let resource = extract_resource_name(method_name, "Delete")
+              #(Some(Delete), Some("/api/v1/" <> resource <> "/{id}"))
+            }
+            _ -> {
+              case string.slice(lower, 0, 4) {
+                "list" -> {
+                  let resource = extract_resource_name(method_name, "List")
+                  #(Some(Get), Some("/api/v1/" <> resource))
+                }
+                _ -> {
+                  case string.slice(lower, 0, 3) {
+                    "get" -> {
+                      let resource = extract_resource_name(method_name, "Get")
+                      #(Some(Get), Some("/api/v1/" <> resource <> "/{id}"))
+                    }
+                    _ -> #(None, None)
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/// Extract resource name from RPC method name
+/// Example: "GetUser" with prefix "Get" -> "users"
+fn extract_resource_name(method_name: String, prefix: String) -> String {
+  method_name
+  |> string.drop_start(string.length(prefix))
+  |> pluralize
+  |> string.lowercase
+}
+
+/// Simple pluralization (add 's')
+fn pluralize(name: String) -> String {
+  name <> "s"
 }
 
 /// Parse method signature to extract types and streaming info

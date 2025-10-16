@@ -13,6 +13,8 @@ pub fn get_well_known_proto_files() -> dict.Dict(String, parser.ProtoFile) {
   |> dict.insert("google/protobuf/wrappers.proto", wrappers_proto())
   |> dict.insert("google/protobuf/struct.proto", struct_proto())
   |> dict.insert("google/protobuf/field_mask.proto", field_mask_proto())
+  |> dict.insert("google/api/annotations.proto", annotations_proto())
+  |> dict.insert("google/api/http.proto", http_proto())
 }
 
 fn timestamp_proto() -> parser.ProtoFile {
@@ -408,6 +410,28 @@ fn field_mask_proto() -> parser.ProtoFile {
   )
 }
 
+fn annotations_proto() -> parser.ProtoFile {
+  parser.ProtoFile(
+    syntax: "proto3",
+    package: option.Some("google.api"),
+    imports: [parser.Import(path: "google/api/http.proto", public: False, weak: False)],
+    messages: [],
+    enums: [],
+    services: [],
+  )
+}
+
+fn http_proto() -> parser.ProtoFile {
+  parser.ProtoFile(
+    syntax: "proto3",
+    package: option.Some("google.api"),
+    imports: [],
+    messages: [],
+    enums: [],
+    services: [],
+  )
+}
+
 pub fn is_well_known_import(path: String) -> Bool {
   case path {
     "google/protobuf/timestamp.proto"
@@ -416,7 +440,9 @@ pub fn is_well_known_import(path: String) -> Bool {
     | "google/protobuf/empty.proto"
     | "google/protobuf/wrappers.proto"
     | "google/protobuf/struct.proto"
-    | "google/protobuf/field_mask.proto" -> True
+    | "google/protobuf/field_mask.proto"
+    | "google/api/annotations.proto"
+    | "google/api/http.proto" -> True
     _ -> False
   }
 }

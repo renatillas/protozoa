@@ -1,0 +1,44 @@
+---
+version: 1.4.1
+title: Well known type definiton: Api
+file: ./test/new_well_known_types_test.gleam
+test_name: generate_api_definition_test
+---
+pub type Api {
+  Api(
+    name: String,
+    methods: List(Method),
+    options: List(Option),
+    version: String,
+    source_context: option.Option(SourceContext),
+    mixins: List(Mixin),
+    syntax: Syntax,
+  )
+}
+
+pub fn encode_api(api: Api) -> BitArray {
+  encode.message([
+    encode.string_field(1, api.name),
+    encode.string_field(4, api.version),
+    encode.enum_field(7, encode_syntax_value(api.syntax)),
+  ])
+}
+
+pub fn api_decoder() -> decode.Decoder(Api) {
+  use name <- decode.then(decode.string_with_default(1, ""))
+  use methods <- decode.then(decode.repeated_field(2, fn(_) { Ok([]) }))
+  use options <- decode.then(decode.repeated_field(3, fn(_) { Ok([]) }))
+  use version <- decode.then(decode.string_with_default(4, ""))
+  use source_context <- decode.then(decode.optional_nested_message(5, sourcecontext_decoder()))
+  use mixins <- decode.then(decode.repeated_field(6, fn(_) { Ok([]) }))
+  use syntax <- decode.then(decode.enum_field(7, decode_syntax_field))
+  decode.success(Api(
+    name: name,
+    methods: methods,
+    options: options,
+    version: version,
+    source_context: source_context,
+    mixins: mixins,
+    syntax: syntax,
+  ))
+}

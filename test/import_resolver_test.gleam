@@ -537,16 +537,13 @@ message AppMessage {
   // Test that code generation works with imports
   let _ = simplifile.create_directory_all("./test_output")
   let assert Ok(generated_files) =
-    codegen.generate_with_imports(paths, registry, "./test_output")
+    codegen.generate_combined_proto_file(paths, registry, "./test_output")
 
-  assert 2 == list.length(generated_files)
-  // Should generate for both files
+  assert 1 == list.length(generated_files)
 
   let _ = simplifile.delete("base.proto")
   let _ = simplifile.delete("app.proto")
-  let _ = simplifile.delete("./test_output/base.gleam")
-  let _ = simplifile.delete("./test_output/app.gleam")
-  let _ = simplifile.clear_directory("./test_output")
+  let _ = simplifile.delete("./test_output")
   Nil
 }
 
@@ -650,22 +647,25 @@ service TestService {
   // Test that code generation works with services
   let _ = simplifile.create_directory_all("./test_service_output")
   let assert Ok(generated_files) =
-    codegen.generate_with_imports(paths, registry, "./test_service_output")
+    codegen.generate_combined_proto_file(
+      paths,
+      registry,
+      "./test_service_output",
+    )
 
   // Should generate one file
   assert 1 == list.length(generated_files)
 
-  // Check that the generated file contains service stubs
+  // Check that the generated file contains service code
   let assert [#(generated_path, generated_content)] = generated_files
 
-  // Should contain service client/server types
-  assert True == string.contains(generated_content, "TestServiceClient")
-  assert True == string.contains(generated_content, "TestServiceServer")
+  // Should contain service error type and service comment
+  assert True == string.contains(generated_content, "TestServiceError")
   assert True == string.contains(generated_content, "// Service: TestService")
 
   // Cleanup
   let _ = simplifile.delete("test_service.proto")
   let _ = simplifile.delete(generated_path)
-  let _ = simplifile.clear_directory("./test_service_output")
+  let _ = simplifile.delete("./test_service_output")
   Nil
 }

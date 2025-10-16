@@ -1,0 +1,100 @@
+syntax = "proto3";
+package temperature;
+
+import "google/api/annotations.proto";
+
+// Request for getting a single temperature reading
+message GetTemperatureRequest {
+    string sensor_id = 1;
+    string location = 2;
+    bool include_history = 3;
+}
+
+// Request for creating a new temperature reading
+message CreateTemperatureRequest {
+    string sensor_id = 1;
+    int32 degrees = 2;
+    string unit = 3;  // "celsius" or "fahrenheit"
+    string location = 4;
+}
+
+// Request for updating a temperature reading
+message UpdateTemperatureRequest {
+    string sensor_id = 1;
+    int32 degrees = 2;
+    string unit = 3;
+    string notes = 4;
+}
+
+// Request for deleting a temperature reading
+message DeleteTemperatureRequest {
+    string sensor_id = 1;
+    string location = 2;
+}
+
+// Request for listing temperature readings
+message ListTemperaturesRequest {
+    string location = 1;
+    int32 limit = 2;
+    int32 offset = 3;
+}
+
+// Request for searching temperatures by range
+message SearchTemperaturesRequest {
+    int32 min_degrees = 1;
+    int32 max_degrees = 2;
+    string location = 3;
+}
+
+// Response for temperature operations
+message TemperatureResponse {
+    string eval = 1;
+    int32 degrees = 2;
+    string sensor_id = 3;
+}
+
+service TemperatureService {
+    // Get a temperature reading with path and query params
+    rpc GetTemperature(GetTemperatureRequest) returns (TemperatureResponse) {
+        option (google.api.http) = {
+            get: "/v1/sensors/{sensor_id}/temperatures"
+        };
+    }
+
+    // Create a new temperature with body mapping
+    rpc CreateTemperature(CreateTemperatureRequest) returns (TemperatureResponse) {
+        option (google.api.http) = {
+            post: "/v1/temperatures"
+            body: "*"
+        };
+    }
+
+    // Update with path param and body
+    rpc UpdateTemperature(UpdateTemperatureRequest) returns (TemperatureResponse) {
+        option (google.api.http) = {
+            put: "/v1/sensors/{sensor_id}/temperatures"
+            body: "*"
+        };
+    }
+
+    // Delete with multiple path params
+    rpc DeleteTemperature(DeleteTemperatureRequest) returns (TemperatureResponse) {
+        option (google.api.http) = {
+            delete: "/v1/locations/{location}/sensors/{sensor_id}"
+        };
+    }
+
+    // List with query parameters
+    rpc ListTemperatures(ListTemperaturesRequest) returns (TemperatureResponse) {
+        option (google.api.http) = {
+            get: "/v1/temperatures"
+        };
+    }
+
+    // Search with PATCH method and query params
+    rpc SearchTemperatures(SearchTemperaturesRequest) returns (TemperatureResponse) {
+        option (google.api.http) = {
+            patch: "/v1/temperatures/search"
+        };
+    }
+}

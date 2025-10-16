@@ -1,0 +1,42 @@
+---
+version: 1.4.1
+title: Well known type definiton: Enum
+file: ./test/new_well_known_types_test.gleam
+test_name: generate_enum_definition_test
+---
+pub type Enum {
+  Enum(
+    name: String,
+    enumvalue: List(EnumValue),
+    options: List(Option),
+    source_context: option.Option(SourceContext),
+    syntax: Syntax,
+    edition: String,
+  )
+}
+
+pub fn encode_enum(enum_def: Enum) -> BitArray {
+  encode.message([
+    encode.string_field(1, enum_def.name),
+    // Simplified implementation
+    encode.enum_field(5, encode_syntax_value(enum_def.syntax)),
+    encode.string_field(6, enum_def.edition),
+  ])
+}
+
+pub fn enum_decoder() -> decode.Decoder(Enum) {
+  use name <- decode.then(decode.string_with_default(1, ""))
+  use enumvalue <- decode.then(decode.repeated_field(2, fn(_) { Ok([]) }))
+  use options <- decode.then(decode.repeated_field(3, fn(_) { Ok([]) }))
+  use source_context <- decode.then(decode.optional_nested_message(4, sourcecontext_decoder()))
+  use syntax <- decode.then(decode.enum_field(5, decode_syntax_field))
+  use edition <- decode.then(decode.string_with_default(6, ""))
+  decode.success(Enum(
+    name: name,
+    enumvalue: enumvalue,
+    options: options,
+    source_context: source_context,
+    syntax: syntax,
+    edition: edition,
+  ))
+}

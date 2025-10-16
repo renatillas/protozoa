@@ -6,6 +6,7 @@
 import gleam/int
 import gleam/list
 import gleam/string
+import justin
 import protozoa/internal/codegen/types.{capitalize_first, flatten_type_name}
 import protozoa/internal/type_registry.{type TypeRegistry}
 import protozoa/parser.{type Field, type Message, type ProtoType}
@@ -31,8 +32,8 @@ pub fn generate_message_decoder_with_registry(
   _registry: TypeRegistry,
   _file_path: String,
 ) -> String {
-  let decoder_fn_name = string.lowercase(message.name) <> "_decoder"
-  let decode_fn_name = "decode_" <> string.lowercase(message.name)
+  let decoder_fn_name = justin.snake_case(message.name) <> "_decoder"
+  let decode_fn_name = "decode_" <> justin.snake_case(message.name)
 
   let decoder_body = generate_decoder_function_body(message)
   let wrapper_body = generate_wrapper_function_body(message, decoder_fn_name)
@@ -143,7 +144,8 @@ fn generate_map_field_decoder(
     parser.MessageType("Value") ->
       "decode.nested_message(" <> field_num <> ", value_decoder())"
     parser.MessageType(name) -> {
-      let decoder_name = string.lowercase(flatten_type_name(name)) <> "_decoder"
+      let decoder_name =
+        justin.snake_case(flatten_type_name(name)) <> "_decoder"
       "decode.nested_message(" <> field_num <> ", " <> decoder_name <> "())"
     }
     _ -> "decode.string_with_default(" <> field_num <> ", \"\")"
@@ -167,7 +169,7 @@ fn generate_single_oneof_decoder(
   message_name: String,
   oneof: parser.Oneof,
 ) -> String {
-  let function_name = "oneof_" <> string.lowercase(oneof.name) <> "_decoder"
+  let function_name = "oneof_" <> justin.snake_case(oneof.name) <> "_decoder"
   let oneof_type_name =
     capitalize_first(message_name) <> capitalize_first(oneof.name)
 
@@ -258,12 +260,13 @@ fn get_field_decoder_for_type(field_type: parser.ProtoType) -> String {
     parser.Float -> "decode.float_field"
     parser.Double -> "decode.double_field"
     parser.MessageType(name) -> {
-      let decoder_name = string.lowercase(flatten_type_name(name)) <> "_decoder"
+      let decoder_name =
+        justin.snake_case(flatten_type_name(name)) <> "_decoder"
       "decode.message_field(_, " <> decoder_name <> "())"
     }
     parser.EnumType(name) -> {
       let decoder_name =
-        "decode_" <> string.lowercase(flatten_type_name(name)) <> "_from_field"
+        "decode_" <> justin.snake_case(flatten_type_name(name)) <> "_from_field"
       decoder_name
     }
     _ -> "decode.string_field"
@@ -282,7 +285,8 @@ fn generate_decoder_function_body(message: Message) -> String {
     message.oneofs
     |> list.map(fn(oneof) {
       let escaped_oneof_name = types.escape_keyword(oneof.name)
-      let function_name = "oneof_" <> string.lowercase(oneof.name) <> "_decoder"
+      let function_name =
+        "oneof_" <> justin.snake_case(oneof.name) <> "_decoder"
       "  use "
       <> escaped_oneof_name
       <> " <- decode.then("
@@ -340,11 +344,11 @@ fn generate_type_decoder(proto_type: ProtoType, field_num: String) -> String {
       "decode.nested_message("
       <> field_num
       <> ", "
-      <> string.lowercase(flatten_type_name(name))
+      <> justin.snake_case(flatten_type_name(name))
       <> "_decoder())"
     parser.EnumType(name) ->
       "decode_"
-      <> string.lowercase(flatten_type_name(name))
+      <> justin.snake_case(flatten_type_name(name))
       <> "_field("
       <> field_num
       <> ")"
@@ -367,7 +371,7 @@ fn generate_optional_type_decoder(
       "decode.optional_nested_message("
       <> field_num
       <> ", "
-      <> string.lowercase(flatten_type_name(name))
+      <> justin.snake_case(flatten_type_name(name))
       <> "_decoder())"
     _ ->
       "decode.optional_field("
@@ -387,7 +391,7 @@ fn generate_repeated_type_decoder(
     parser.Int32 -> "decode.repeated_int32(" <> field_num <> ")"
     parser.EnumType(name) ->
       "decode_repeated_"
-      <> string.lowercase(flatten_type_name(name))
+      <> justin.snake_case(flatten_type_name(name))
       <> "("
       <> field_num
       <> ")"
@@ -413,7 +417,7 @@ fn generate_simple_type_decoder(proto_type: ProtoType) -> String {
     parser.Double -> "decode.double_field(field)"
     parser.MessageType(name) ->
       "decode.message_field(_, "
-      <> string.lowercase(flatten_type_name(name))
+      <> justin.snake_case(flatten_type_name(name))
       <> "_decoder())(field)"
     _ ->
       "Error(decode.DecodeError(expected: \"supported field type\", found: \"unsupported field type\", path: []))"

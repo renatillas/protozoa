@@ -49,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `Service` and `Method` types to parser
   - Full parsing support for service definitions with RPC methods
   - Streaming RPC support detection (client, server, bidirectional)
-  - Service code generation with client and server interface stubs
+  - Service code generation with client and server stubs
   - Method signature comments with streaming information
   - Comprehensive test coverage for service parsing and code generation
 - **Field Options Support** - Enhanced field-level configuration
@@ -100,7 +100,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Server streaming: `rpc Method(Request) returns (stream Response)`
   - Client streaming: `rpc Method(stream Request) returns (Response)`
   - Bidirectional: `rpc Method(stream Request) returns (stream Response)`
-- **Code Generation**: Service stubs generate client/server interfaces with method signatures
+- **Code Generation**: Service stubs generate client/server modules with method signatures
 - **Language**: Gleam with Erlang runtime
 - **Proto Version**: proto3 only
 - **Dependencies**: Minimal with stdlib, simplifile, argv, snag

@@ -1,56 +1,73 @@
 # Protozoa 🦠
 
-A complete Protocol Buffers compiler and library for Gleam, providing full proto3 support with type-safe code generation, service definitions, and streaming RPC support.
+A Protocol Buffers library for Gleam, providing encoding and decoding of protobuf messages.
 
 [![Package Version](https://img.shields.io/hexpm/v/protozoa)](https://hex.pm/packages/protozoa)
 [![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/protozoa/)
 
 ## Features
 
-✅ **Complete proto3 support** - Messages, enums, services, nested types, oneofs, maps, and repeated fields  
-✅ **Service/RPC definitions** - Full gRPC support with streaming (client, server, bidirectional)  
-✅ **Import resolution** - Handles import statements with configurable search paths  
-✅ **Well-known types** - Google's standard protobuf types (Timestamp, Duration, Any, etc.)  
-✅ **Field options** - Support for deprecated, json_name, packed, and custom options  
-✅ **Type-safe codegen** - Generates idiomatic Gleam code with proper type safety  
-✅ **CLI tools** - Easy-to-use command line interface with project integration  
+✅ **Complete proto3 support** - Messages, enums, nested types, oneofs, maps, and repeated fields  
+✅ **Type-safe encoding/decoding** - Compile-time guarantees for message structure  
 ✅ **All field types** - Full support for all scalar types, including fixed32/fixed64  
-✅ **Cross-file imports** - Resolves dependencies between multiple proto files  
+✅ **Wire format compliance** - Correct Protocol Buffers binary format  
+✅ **Performance optimized** - Efficient encoding and decoding operations  
 
-## Quick Start
-
-### Installation
+## Installation
 
 Add to your `gleam.toml`:
 
 ```toml
 [dependencies]
-protozoa = ">= 1.0.0 and < 2.0.0"
+protozoa = ">= 2.0.3 and < 3.0.0"
 ```
 
-### Project Setup (Recommended)
+## Usage
 
-1. **Create your proto files** in `src/[your-app]/proto/`:
+### Basic Encoding and Decoding
 
+```gleam
+import protozoa/encode
+import protozoa/decode
+
+// Define your message type
+pub type User {
+  User(name: String, age: Int, active: Bool)
+}
+
+// Encode a message
+pub fn encode_user(user: User) -> BitArray {
+  encode.message([
+    encode.string_field(1, user.name),
+    encode.int32_field(2, user.age),
+    encode.bool_field(3, user.active),
+  ])
+}
+
+// Create a decoder
+fn user_decoder() -> decode.Decoder(User) {
+  use name <- decode.then(decode.string_with_default(1, ""))
+  use age <- decode.then(decode.int32_with_default(2, 0))
+  use active <- decode.then(decode.bool_with_default(3, False))
+  decode.success(User(name: name, age: age, active: active))
+}
+
+// Decode a message
+pub fn decode_user(data: BitArray) -> Result(User, List(decode.DecodeError)) {
+  decode.run(data, user_decoder())
+}
 ```
-your-project/
-├── gleam.toml
-└── src/
-    └── myapp/
-        └── proto/
-            ├── user.proto
-            ├── message.proto
-            └── user_service.proto
-```
 
-2. **Generate Gleam code** with the convenient CLI:
+## Code Generation
+
+For automatic code generation from `.proto` files, use the separate `protozoa_dev` package:
 
 ```bash
-# Generate all proto files in your project
-gleam run -m protozoa
+# Add as dev dependency
+gleam add protozoa_dev --dev
 
-# Check if proto files need regeneration (useful for CI)
-gleam run -m protozoa check
+# Generate code from proto files
+gleam run -m protozoa/dev -- input.proto output_dir
 ```
 
 3. **Use the generated code** in your Gleam modules:
@@ -79,20 +96,20 @@ For custom workflows, you can also use protozoa directly:
 
 ```bash
 # Compile a specific proto file
-gleam run -m protozoa -- message.proto ./output
+gleam run -m protozoa/dev -- message.proto ./output
 
 # Use custom import paths
-gleam run -m protozoa -- -I./common -I./vendor message.proto ./src
+gleam run -m protozoa/dev -- -I./common -I./vendor message.proto ./src
 
 # Check if files need regeneration (full CLI mode)
-gleam run -m protozoa -- --check
+gleam run -m protozoa/dev -- --check
 ```
 
 ## CLI Reference
 
 ### Automatic Project Integration
 
-The recommended approach is to use `gleam run -m protozoa`, which automatically:
+The recommended approach is to use `gleam run -m protozoa/dev`, which automatically:
 
 - Detects your app name from `gleam.toml`
 - Finds proto files in `src/[appname]/proto/` directories
@@ -101,10 +118,10 @@ The recommended approach is to use `gleam run -m protozoa`, which automatically:
 
 ```bash
 # Generate all proto files (recommended)
-gleam run -m protozoa
+gleam run -m protozoa/dev
 
 # Check if proto files have changed
-gleam run -m protozoa check
+gleam run -m protozoa/dev check
 ```
 
 ### Manual Commands
@@ -113,16 +130,16 @@ For advanced usage or custom project structures:
 
 ```bash
 # Single file compilation
-gleam run -m protozoa -- input.proto output.gleam
+gleam run -m protozoa/dev -- input.proto output.gleam
 
 # Multiple import paths
-gleam run -m protozoa -- -I./proto -I./vendor input.proto output.gleam
+gleam run -m protozoa/dev -- -I./proto -I./vendor input.proto output.gleam
 
 # Directory processing
-gleam run -m protozoa -- ./proto/ ./src/generated/
+gleam run -m protozoa/dev -- ./proto/ ./src/generated/
 
 # Status checking
-gleam run -m protozoa -- --check ./proto/
+gleam run -m protozoa/dev -- --check ./proto/
 ```
 
 ## Supported Features
@@ -147,9 +164,9 @@ gleam run -m protozoa -- --check ./proto/
 | Streaming Type | Syntax | Support | Generated Code |
 |---------------|--------|---------|----------------|
 | **Unary** | `rpc Method(Request) returns (Response)` | ✅ | Client/server stubs |
-| **Server Streaming** | `rpc Method(Request) returns (stream Response)` | ✅ | Streaming interface |
-| **Client Streaming** | `rpc Method(stream Request) returns (Response)` | ✅ | Streaming interface |
-| **Bidirectional** | `rpc Method(stream Request) returns (stream Response)` | ✅ | Full duplex interface |
+| **Server Streaming** | `rpc Method(Request) returns (stream Response)` | ✅ | Streaming support |
+| **Client Streaming** | `rpc Method(stream Request) returns (Response)` | ✅ | Streaming support |
+| **Bidirectional** | `rpc Method(stream Request) returns (stream Response)` | ✅ | Bidirectional streaming |
 
 ### Field Types
 
@@ -222,14 +239,14 @@ service UserService {
 Generates:
 
 ```gleam
-/// Client interface for UserService service
+/// Client for UserService service
 pub type UserServiceClient {
   UserServiceClient(
     endpoint: String,
   )
 }
 
-/// Server interface for UserService service
+/// Server for UserService service
 pub type UserServiceServer {
   UserServiceServer(
     // Server implementation fields
@@ -285,7 +302,7 @@ pub type Event {
   - ✅ Dependency management and comprehensive type registry
 - ✅ **CLI improvements** - Production-ready tooling
   - ✅ Project structure auto-detection (`src/[appname]/proto/`)
-  - ✅ `gleam run -m protozoa` integration
+  - ✅ `gleam run -m protozoa/dev` integration
   - ✅ `--check` mode for CI/build systems
   - ✅ Generated file safety headers
 - ✅ **Well-known types** - Google's standard protobuf types
@@ -304,7 +321,7 @@ pub type Event {
 - ✅ **Services/RPC** - Support for service definitions
   - ✅ Service definition parsing
   - ✅ Method definitions with all streaming types
-  - ✅ Code generation for service stubs (client/server interfaces)
+  - ✅ Code generation for service stubs (client/server modules)
   - ✅ Streaming support detection (client/server/bidirectional)
 
 ### High Priority Roadmap
@@ -357,3 +374,4 @@ Contributions are welcome! Please feel free to submit issues, feature requests, 
 ## License
 
 This project is licensed under the MIT License.
+

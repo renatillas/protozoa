@@ -1,0 +1,47 @@
+---
+version: 1.4.1
+title: Well known type definiton: Method
+file: ./test/new_well_known_types_test.gleam
+test_name: generate_method_definition_test
+---
+pub type Method {
+  Method(
+    name: String,
+    request_type_url: String,
+    request_streaming: Bool,
+    response_type_url: String,
+    response_streaming: Bool,
+    options: List(Option),
+    syntax: Syntax,
+  )
+}
+
+pub fn encode_method(method: Method) -> BitArray {
+  encode.message([
+    encode.string_field(1, method.name),
+    encode.string_field(2, method.request_type_url),
+    encode.bool_field(3, method.request_streaming),
+    encode.string_field(4, method.response_type_url),
+    encode.bool_field(5, method.response_streaming),
+    encode.enum_field(7, encode_syntax_value(method.syntax)),
+  ])
+}
+
+pub fn method_decoder() -> decode.Decoder(Method) {
+  use name <- decode.then(decode.string_with_default(1, ""))
+  use request_type_url <- decode.then(decode.string_with_default(2, ""))
+  use request_streaming <- decode.then(decode.bool_with_default(3, False))
+  use response_type_url <- decode.then(decode.string_with_default(4, ""))
+  use response_streaming <- decode.then(decode.bool_with_default(5, False))
+  use options <- decode.then(decode.repeated_field(6, fn(_) { Ok([]) }))
+  use syntax <- decode.then(decode.enum_field(7, decode_syntax_field))
+  decode.success(Method(
+    name: name,
+    request_type_url: request_type_url,
+    request_streaming: request_streaming,
+    response_type_url: response_type_url,
+    response_streaming: response_streaming,
+    options: options,
+    syntax: syntax,
+  ))
+}

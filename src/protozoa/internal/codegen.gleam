@@ -4,50 +4,16 @@
 //// definitions. It delegates to specialized sub-modules for different aspects of code generation.
 
 import gleam/list
+import gleam/option
 import gleam/result
 import gleam/string
 import protozoa/internal/codegen/decoders
 import protozoa/internal/codegen/encoders
+import protozoa/internal/codegen/router
 import protozoa/internal/codegen/types
 import protozoa/internal/type_registry.{type TypeRegistry}
 import protozoa/parser.{type Path, type ProtoFile}
 import simplifile
-
-/// Simple wrapper for testing - generates code for a single proto file without imports
-pub fn generate_simple_for_testing(proto_file: ProtoFile) -> String {
-  let registry = type_registry.new()
-  let fake_file_path = "test.proto"
-
-  case generate_file_with_imports(proto_file, fake_file_path, registry) {
-    Ok(code) -> code
-    Error(err) -> panic as { "Code generation failed: " <> err }
-  }
-}
-
-/// Generate code for multiple proto files with cross-file imports
-pub fn generate_with_imports(
-  files files: List(Path),
-  registry registry: TypeRegistry,
-  output_dir output_dir: String,
-) -> Result(List(#(String, String)), String) {
-  list.try_map(files, fn(file_entry) {
-    let base_name = get_base_name(file_entry.path)
-    let output_path = output_dir <> "/" <> base_name <> ".gleam"
-
-    use code <- result.try(generate_file_with_imports(
-      file_entry.content,
-      file_entry.path,
-      registry,
-    ))
-
-    use _ <- result.try(
-      simplifile.write(output_path, code)
-      |> result.map_error(fn(_) { "Failed to write file: " <> output_path }),
-    )
-
-    Ok(#(output_path, code))
-  })
-}
 
 /// Generate code for multiple proto files combined into a single proto.gleam file
 pub fn generate_combined_proto_file(
@@ -103,6 +69,7 @@ pub fn generate_combined_proto_file(
         combined_sections.message_decoders,
         combined_sections.enum_helpers,
         combined_sections.service_stubs,
+        combined_sections.service_routers,
       ]
         |> list.filter(fn(section) { !string.is_empty(section) }),
       "\n\n",
@@ -117,68 +84,6 @@ pub fn generate_combined_proto_file(
 }
 
 /// Generate code for a single proto file
-fn generate_file_with_imports(
-  proto_file: ProtoFile,
-  file_path: String,
-  registry: TypeRegistry,
-) -> Result(String, String) {
-  // Generate all components
-  let header = generate_file_header(file_path)
-  let imports = generate_imports(proto_file)
-  let well_known_defs = generate_well_known_definitions(proto_file)
-  let enum_types = types.generate_enum_types(proto_file.enums)
-  let message_types =
-    types.generate_types_with_registry(proto_file.messages, registry, file_path)
-  let message_encoders =
-    encoders.generate_encoders_with_registry(
-      proto_file.messages,
-      registry,
-      file_path,
-    )
-  let message_decoders =
-    decoders.generate_decoders_with_registry(
-      proto_file.messages,
-      registry,
-      file_path,
-    )
-  let enum_helpers =
-    encoders.generate_enum_helpers_with_nested(
-      proto_file.enums,
-      proto_file.messages,
-    )
-
-  let service_stubs = generate_service_stubs(proto_file.services)
-
-  // Combine all sections with proper spacing
-  let sections =
-    [
-      header,
-      imports,
-      well_known_defs,
-      enum_types,
-      message_types,
-      message_encoders,
-      message_decoders,
-      enum_helpers,
-      service_stubs,
-    ]
-    |> list.filter(fn(section) { !string.is_empty(section) })
-
-  Ok(string.join(sections, "\n\n"))
-}
-
-// Helper functions
-
-fn get_base_name(file_path: String) -> String {
-  file_path
-  |> string.split("/")
-  |> list.last()
-  |> result.unwrap("")
-  |> string.split(".")
-  |> list.first()
-  |> result.unwrap("generated")
-}
-
 fn generate_combined_file_header(files: List(Path)) -> String {
   let file_list =
     files
@@ -220,6 +125,7 @@ pub type ContentSections {
     message_decoders: String,
     enum_helpers: String,
     service_stubs: String,
+    service_routers: String,
   )
 }
 
@@ -249,6 +155,13 @@ fn generate_file_content_sections(
       proto_file.messages,
     )
   let service_stubs = generate_service_stubs(proto_file.services)
+  let service_routers =
+    proto_file.services
+    |> list.map(fn(service) {
+      router.generate_service_router(service, proto_file.messages)
+    })
+    |> list.filter(fn(s) { !string.is_empty(s) })
+    |> string.join("\n\n")
 
   Ok(ContentSections(
     enum_types: enum_types,
@@ -257,6 +170,7 @@ fn generate_file_content_sections(
     message_decoders: message_decoders,
     enum_helpers: enum_helpers,
     service_stubs: service_stubs,
+    service_routers: service_routers,
   ))
 }
 
@@ -265,7 +179,7 @@ fn combine_content_sections(
 ) -> ContentSections {
   list.fold(
     all_sections,
-    ContentSections("", "", "", "", "", ""),
+    ContentSections("", "", "", "", "", "", ""),
     fn(acc, section) {
       ContentSections(
         enum_types: combine_non_empty(acc.enum_types, section.enum_types),
@@ -286,6 +200,10 @@ fn combine_content_sections(
           acc.service_stubs,
           section.service_stubs,
         ),
+        service_routers: combine_non_empty(
+          acc.service_routers,
+          section.service_routers,
+        ),
       )
     },
   )
@@ -304,23 +222,6 @@ fn is_well_known_proto_file(file_path: String) -> Bool {
   string.contains(file_path, "google/protobuf/")
 }
 
-fn generate_file_header(proto_file_path: String) -> String {
-  "//// Generated by Protozoa from "
-  <> proto_file_path
-  <> "\n"
-  <> "//// \n"
-  <> "//// This file is auto-generated and can be safely deleted and regenerated.\n"
-  <> "//// To regenerate all proto files, run: gleam run -m protozoa\n"
-  <> "//// \n"
-  <> "//// DO NOT EDIT THIS FILE MANUALLY - all changes will be lost on regeneration."
-}
-
-fn generate_imports(proto_file: ProtoFile) -> String {
-  let needed_imports = determine_needed_imports(proto_file)
-  needed_imports
-  |> string.join("\n")
-}
-
 fn determine_needed_imports(proto_file: ProtoFile) -> List(String) {
   let base_imports = ["import protozoa/decode", "import protozoa/encode"]
 
@@ -335,11 +236,9 @@ fn determine_needed_imports(proto_file: ProtoFile) -> List(String) {
   // Add option import if we have oneofs or optional fields
   let has_optional = has_optional_fields(proto_file)
   let has_oneof = has_oneofs(proto_file)
-  let imports = case has_optional, has_oneof {
-    True, True -> ["import gleam/option.{type Option, None, Some}", ..imports]
-    True, False -> ["import gleam/option.{type Option, None, Some}", ..imports]
-    False, True -> ["import gleam/option.{None, Some}", ..imports]
-    False, False -> imports
+  let imports = case has_optional || has_oneof {
+    True -> ["import gleam/option", ..imports]
+    False -> imports
   }
 
   // Add dict import if we have oneofs (for oneof decoders)
@@ -378,7 +277,36 @@ fn determine_needed_imports(proto_file: ProtoFile) -> List(String) {
     False -> imports
   }
 
+  // Add imports for HTTP routers if we have services with methods
+  let has_http_routers = has_services_with_http_methods(proto_file)
+  let imports = case has_http_routers {
+    True -> {
+      let base_http_imports = [
+        "import gleam/bytes_tree",
+        "import gleam/http",
+        "import gleam/http/request",
+        "import gleam/http/response",
+        "import gleam/int",
+        "import gleam/list",
+        "import gleam/string",
+        "import mist",
+        ..imports
+      ]
+
+      // Only add float if we have float/double query parameters
+      let needs_float = has_float_query_params(proto_file)
+      let base_http_imports = case needs_float {
+        True -> ["import gleam/float", ..base_http_imports]
+        False -> base_http_imports
+      }
+
+      base_http_imports
+    }
+    False -> imports
+  }
+
   list.sort(imports, string.compare)
+  |> list.unique()
 }
 
 fn has_repeated_fields(proto_file: ProtoFile) -> Bool {
@@ -476,17 +404,48 @@ fn has_message_fields(proto_file: ProtoFile) -> Bool {
   })
 }
 
-fn generate_well_known_definitions(proto_file: ProtoFile) -> String {
-  let referenced_types = get_referenced_well_known_types(proto_file)
+fn has_services_with_http_methods(proto_file: ProtoFile) -> Bool {
+  proto_file.services
+  |> list.any(fn(service) {
+    service.methods
+    |> list.any(fn(method) {
+      case method.http_method, method.http_path {
+        option.Some(_), option.Some(_) -> True
+        _, _ -> False
+      }
+    })
+  })
+}
 
-  case referenced_types {
-    [] -> ""
-    _ -> {
-      referenced_types
-      |> list.map(generate_well_known_type_definition)
-      |> string.join("\n\n")
-    }
-  }
+fn has_float_query_params(proto_file: ProtoFile) -> Bool {
+  // Check if any GET/DELETE methods have float/double fields
+  proto_file.services
+  |> list.any(fn(service) {
+    service.methods
+    |> list.filter(fn(method) {
+      case method.http_method {
+        option.Some(parser.Get) | option.Some(parser.Delete) -> True
+        _ -> False
+      }
+    })
+    |> list.any(fn(method) {
+      // Find the request message for this method
+      proto_file.messages
+      |> list.find(fn(msg) { msg.name == method.input_type })
+      |> result.map(fn(msg) {
+        msg.fields
+        |> list.any(fn(field) {
+          case field.field_type {
+            parser.Float | parser.Double -> True
+            parser.Repeated(parser.Float) | parser.Repeated(parser.Double) -> True
+            parser.Optional(parser.Float) | parser.Optional(parser.Double) -> True
+            _ -> False
+          }
+        })
+      })
+      |> result.unwrap(False)
+    })
+  })
 }
 
 fn get_referenced_well_known_types(proto_file: ProtoFile) -> List(String) {
@@ -818,123 +777,35 @@ fn generate_service_stubs(services: List(parser.Service)) -> String {
 
 /// Generate stub for a single service
 fn generate_single_service_stub(service: parser.Service) -> String {
-  let client_interface = generate_client_interface(service)
-  let server_interface = generate_server_interface(service)
+  let error_type = generate_service_error_type(service.name)
 
   string.join(
     [
       "// Service: " <> service.name,
       "",
-      client_interface,
-      "",
-      server_interface,
+      error_type,
     ],
     "\n",
   )
 }
 
-/// Generate client interface for service
-fn generate_client_interface(service: parser.Service) -> String {
-  let type_name = service.name <> "Client"
-  let method_comments = generate_method_comments(service.methods, "client")
-
+/// Generate a ServiceError type for the service
+fn generate_service_error_type(service_name: String) -> String {
+  let error_type_name = service_name <> "Error"
   string.join(
     [
-      "/// Client interface for " <> service.name <> " service",
-      "/// This trait defines the client-side methods for calling the service",
-      "pub type " <> type_name <> " {",
-      "  " <> type_name <> "(",
-      "    // TODO: Add client implementation fields (e.g., HTTP client, endpoint URL)",
-      "    endpoint: String,",
-      "  )",
+      "/// Error type for " <> service_name <> " service",
+      "pub type " <> error_type_name <> " {",
+      "  NotFound",
+      "  Unauthorized",
+      "  BadRequest(String)",
+      "  InvalidRequest(String)",
+      "  InternalError(String)",
+      "  Unavailable(String)",
       "}",
-      "",
-      method_comments,
-      "// TODO: Implement actual client method calls",
     ],
     "\n",
   )
-}
-
-/// Generate server interface for service
-fn generate_server_interface(service: parser.Service) -> String {
-  let type_name = service.name <> "Server"
-  let method_comments = generate_method_comments(service.methods, "server")
-
-  string.join(
-    [
-      "/// Server interface for " <> service.name <> " service",
-      "/// Implement this trait to handle incoming service requests",
-      "pub type " <> type_name <> " {",
-      "  " <> type_name <> "(",
-      "    // TODO: Add server implementation fields",
-      "  )",
-      "}",
-      "",
-      method_comments,
-      "// TODO: Implement server method handlers and request routing",
-    ],
-    "\n",
-  )
-}
-
-/// Generate method signature comments
-fn generate_method_comments(
-  methods: List(parser.Method),
-  interface_type: String,
-) -> String {
-  let comment_prefix = case interface_type {
-    "client" -> "// Method signatures for " <> interface_type <> ":"
-    "server" -> "// Method signatures for " <> interface_type <> ":"
-    _ -> "// Method signatures:"
-  }
-
-  let method_lines =
-    list.map(methods, fn(method) {
-      let streaming_info =
-        get_streaming_comment(
-          method.client_streaming,
-          method.server_streaming,
-          interface_type,
-        )
-      "  // "
-      <> method.name
-      <> "("
-      <> method.input_type
-      <> ") -> "
-      <> method.output_type
-      <> " "
-      <> streaming_info
-    })
-
-  string.join([comment_prefix, ..method_lines], "\n")
-}
-
-/// Get streaming type comment for method
-fn get_streaming_comment(
-  client_streaming: Bool,
-  server_streaming: Bool,
-  interface_type: String,
-) -> String {
-  let base_type = case interface_type {
-    "server" ->
-      "// "
-      <> case client_streaming, server_streaming {
-        False, False -> "Unary handler"
-        False, True -> "Server streaming handler"
-        True, False -> "Client streaming handler"
-        True, True -> "Bidirectional streaming handler"
-      }
-    _ ->
-      "// "
-      <> case client_streaming, server_streaming {
-        False, False -> "Unary call"
-        False, True -> "Server streaming"
-        True, False -> "Client streaming"
-        True, True -> "Bidirectional streaming"
-      }
-  }
-  base_type
 }
 
 // New well-known type definitions

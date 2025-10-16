@@ -6,6 +6,7 @@
 import gleam/int
 import gleam/list
 import gleam/string
+import justin
 import protozoa/internal/codegen/types.{capitalize_first, flatten_type_name}
 import protozoa/internal/type_registry.{type TypeRegistry}
 import protozoa/parser.{type Field, type Message, type ProtoType}
@@ -31,12 +32,12 @@ pub fn generate_message_encoder_with_registry(
   registry: TypeRegistry,
   file_path: String,
 ) -> String {
-  let function_name = "encode_" <> string.lowercase(message.name)
+  let function_name = "encode_" <> justin.snake_case(message.name)
   let is_empty = list.is_empty(message.fields) && list.is_empty(message.oneofs)
 
   let param_name = case is_empty {
-    True -> "_" <> string.lowercase(message.name)
-    False -> string.lowercase(message.name)
+    True -> "_" <> justin.snake_case(message.name)
+    False -> justin.snake_case(message.name)
   }
 
   // Separate different field types
@@ -275,7 +276,7 @@ fn generate_required_field_encoder(
       "encode.field("
       <> field_num
       <> ", wire.LengthDelimited, encode.length_delimited(encode_"
-      <> string.lowercase(flatten_type_name(get_type_name(proto_type)))
+      <> justin.snake_case(flatten_type_name(get_type_name(proto_type)))
       <> "("
       <> access
       <> ")))"
@@ -283,7 +284,7 @@ fn generate_required_field_encoder(
       "encode.int32_field("
       <> field_num
       <> ", encode_"
-      <> string.lowercase(flatten_type_name(get_type_name(proto_type)))
+      <> justin.snake_case(flatten_type_name(get_type_name(proto_type)))
       <> "_value("
       <> access
       <> "))"
@@ -379,13 +380,13 @@ fn generate_repeated_item_encoder(
       "encode.field("
       <> field_num
       <> ", wire.LengthDelimited, encode.length_delimited(encode_"
-      <> string.lowercase(flatten_type_name(get_type_name(proto_type)))
+      <> justin.snake_case(flatten_type_name(get_type_name(proto_type)))
       <> "(v)))"
     parser.EnumType(_) ->
       "encode.int32_field("
       <> field_num
       <> ", encode_"
-      <> string.lowercase(flatten_type_name(get_type_name(proto_type)))
+      <> justin.snake_case(flatten_type_name(get_type_name(proto_type)))
       <> "_value(v))"
     _ -> "encode.string_field(" <> field_num <> ", \"unsupported\")"
   }
@@ -448,7 +449,7 @@ fn generate_enum_helper(enum: parser.Enum) -> String {
 }
 
 fn generate_enum_encoder(enum: parser.Enum) -> String {
-  let function_name = "encode_" <> string.lowercase(enum.name) <> "_value"
+  let function_name = "encode_" <> justin.snake_case(enum.name) <> "_value"
   let cases =
     enum.values
     |> list.map(fn(variant) {
@@ -467,7 +468,7 @@ fn generate_enum_encoder(enum: parser.Enum) -> String {
 }
 
 fn generate_enum_decoder(enum: parser.Enum) -> String {
-  let function_name = "decode_" <> string.lowercase(enum.name) <> "_field"
+  let function_name = "decode_" <> justin.snake_case(enum.name) <> "_field"
   let decode_cases =
     enum.values
     |> list.map(fn(variant) {
@@ -503,7 +504,7 @@ fn generate_enum_decoder(enum: parser.Enum) -> String {
 }
 
 fn generate_enum_field_decoder(enum: parser.Enum) -> String {
-  let function_name = "decode_" <> string.lowercase(enum.name) <> "_from_field"
+  let function_name = "decode_" <> justin.snake_case(enum.name) <> "_from_field"
   let decode_cases =
     enum.values
     |> list.map(fn(variant) {
@@ -535,7 +536,7 @@ fn generate_enum_field_decoder(enum: parser.Enum) -> String {
 }
 
 fn generate_enum_value_decoder(enum: parser.Enum) -> String {
-  let function_name = "decode_" <> string.lowercase(enum.name) <> "_value"
+  let function_name = "decode_" <> justin.snake_case(enum.name) <> "_value"
   let decode_cases =
     enum.values
     |> list.map(fn(variant) {
@@ -564,7 +565,7 @@ fn generate_enum_value_decoder(enum: parser.Enum) -> String {
 }
 
 fn generate_repeated_enum_decoder(enum: parser.Enum) -> String {
-  let function_name = "decode_repeated_" <> string.lowercase(enum.name)
+  let function_name = "decode_repeated_" <> justin.snake_case(enum.name)
 
   "pub fn "
   <> function_name
@@ -574,7 +575,7 @@ fn generate_repeated_enum_decoder(enum: parser.Enum) -> String {
   <> "  decode.repeated_field(field_num, fn(field) {\n"
   <> "    use value <- result.try(decode.int32_field(field))\n"
   <> "    decode_"
-  <> string.lowercase(enum.name)
+  <> justin.snake_case(enum.name)
   <> "_value(value)\n"
   <> "    |> result.map_error(fn(err) { decode.DecodeError(expected: \""
   <> string.lowercase(enum.name)

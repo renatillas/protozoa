@@ -1,4 +1,4 @@
-import gleam/string
+import birdie
 import gleeunit
 import protozoa/internal/codegen
 
@@ -8,128 +8,48 @@ pub fn main() {
 
 // Test that our new well-known type generator functions work correctly
 pub fn generate_type_definition_test() {
-  let generated = codegen.generate_well_known_type_definition("Type")
-
-  // Should contain the Type definition
-  assert string.contains(generated, "pub type Type {")
-
-  // Should contain the Syntax enum
-  assert string.contains(generated, "pub type Syntax {")
-
-  // Should contain encoder
-  assert string.contains(generated, "pub fn encode_type(")
-
-  // Should contain decoder  
-  assert string.contains(generated, "pub fn type_decoder()")
+  codegen.generate_well_known_type_definition("Type")
+  |> birdie.snap("Well known type definition: Type")
 }
 
 pub fn generate_field_definition_test() {
-  let generated = codegen.generate_well_known_type_definition("Field")
-  // Should contain the Field definition
-  assert string.contains(generated, "pub type Field {")
-
-  // Should contain the FieldKind enum
-  assert string.contains(generated, "pub type FieldKind {")
-
-  // Should contain the FieldCardinality enum
-  assert string.contains(generated, "pub type FieldCardinality {")
-
-  // Should contain encoder
-  assert string.contains(generated, "pub fn encode_field(")
-
-  // Should contain decoder
-  assert string.contains(generated, "pub fn field_decoder()")
+  codegen.generate_well_known_type_definition("Field")
+  |> birdie.snap("Well known type definition: Field")
 }
 
 pub fn generate_option_definition_test() {
-  let generated = codegen.generate_well_known_type_definition("Option")
-
-  // Should contain the Option definition
-  assert string.contains(generated, "pub type Option {")
-
-  // Should contain encoder
-  assert string.contains(generated, "pub fn encode_option(")
-
-  // Should contain decoder
-  assert string.contains(generated, "pub fn option_decoder()")
+  codegen.generate_well_known_type_definition("Option")
+  |> birdie.snap("Well known type definiton: Option")
 }
 
 pub fn generate_sourcecontext_definition_test() {
-  let generated = codegen.generate_well_known_type_definition("SourceContext")
-
-  // Should contain the SourceContext definition  
-  assert string.contains(generated, "pub type SourceContext {")
-
-  // Should contain encoder
-  assert string.contains(generated, "pub fn encode_sourcecontext(")
-
-  // Should contain decoder
-  assert string.contains(generated, "pub fn sourcecontext_decoder()")
+  codegen.generate_well_known_type_definition("SourceContext")
+  |> birdie.snap("Well known type definiton: SourceContext")
 }
 
 pub fn generate_api_definition_test() {
-  let generated = codegen.generate_well_known_type_definition("Api")
-
-  // Should contain the Api definition
-  assert string.contains(generated, "pub type Api {")
-
-  // Should contain encoder
-  assert string.contains(generated, "pub fn encode_api(")
-
-  // Should contain decoder
-  assert string.contains(generated, "pub fn api_decoder()")
+  codegen.generate_well_known_type_definition("Api")
+  |> birdie.snap("Well known type definiton: Api")
 }
 
 pub fn generate_enum_definition_test() {
-  let generated = codegen.generate_well_known_type_definition("Enum")
-
-  // Should contain the Enum definition
-  assert string.contains(generated, "pub type Enum {")
-
-  // Should contain encoder
-  assert string.contains(generated, "pub fn encode_enum(")
-
-  // Should contain decoder
-  assert string.contains(generated, "pub fn enum_decoder()")
+  codegen.generate_well_known_type_definition("Enum")
+  |> birdie.snap("Well known type definiton: Enum")
 }
 
 pub fn generate_enumvalue_definition_test() {
-  let generated = codegen.generate_well_known_type_definition("EnumValue")
-
-  // Should contain the EnumValue definition
-  assert string.contains(generated, "pub type EnumValue {")
-
-  // Should contain encoder
-  assert string.contains(generated, "pub fn encode_enumvalue(")
-
-  // Should contain decoder
-  assert string.contains(generated, "pub fn enumvalue_decoder()")
+  codegen.generate_well_known_type_definition("EnumValue")
+  |> birdie.snap("Well known type definiton: EnumValue")
 }
 
 pub fn generate_method_definition_test() {
-  let generated = codegen.generate_well_known_type_definition("Method")
-
-  // Should contain the Method definition
-  assert string.contains(generated, "pub type Method {")
-
-  // Should contain encoder
-  assert string.contains(generated, "pub fn encode_method(")
-
-  // Should contain decoder
-  assert string.contains(generated, "pub fn method_decoder()")
+  codegen.generate_well_known_type_definition("Method")
+  |> birdie.snap("Well known type definiton: Method")
 }
 
 pub fn generate_mixin_definition_test() {
-  let generated = codegen.generate_well_known_type_definition("Mixin")
-
-  // Should contain the Mixin definition
-  assert string.contains(generated, "pub type Mixin {")
-
-  // Should contain encoder
-  assert string.contains(generated, "pub fn encode_mixin(")
-
-  // Should contain decoder
-  assert string.contains(generated, "pub fn mixin_decoder()")
+  codegen.generate_well_known_type_definition("Mixin")
+  |> birdie.snap("Well known type definiton: Mixin")
 }
 
 pub fn all_new_types_recognized_test() {
