@@ -55,9 +55,8 @@ pub fn generate_service_router(
         |> list.map(fn(method) { generate_http_adapter(method, service.name) })
         |> string.join("\n\n")
 
-      // Generate error types and converters
+      // Generate error type
       let service_error_type = generate_service_error_type(service)
-      let error_converter = generate_error_converter(service)
 
       // Generate query parameter helpers only for GET/DELETE methods
       let needed_helpers = analyze_needed_helpers(service, messages)
@@ -69,18 +68,16 @@ pub fn generate_service_router(
         [
           "/// Auto-generated service for " <> service.name,
           "/// ",
-          "/// Layer 1: Core service functions (transport-agnostic)",
-          "/// Layer 2: HTTP adapters (works with gleam/http)",
+          "/// Layer 1: Core service functions (transport-agnostic BitArray -> Result)",
+          "/// Layer 2: HTTP adapters (gleam/http types, returns Result for middleware)",
           "/// ",
-          "/// Error types support telemetry and logging",
+          "/// HTTP adapters return Result(Response, ServiceError) for middleware pattern",
           "",
           service_error_type,
           "",
           service_functions,
           "",
           http_adapters,
-          "",
-          error_converter,
           "",
           query_helpers,
           "",
@@ -174,17 +171,13 @@ fn generate_http_adapter(method: Method, service_name: String) -> String {
             [
               "  let request_bytes = req.body",
               "  case " <> service_function_name <> "(request_bytes, handler) {",
-              "    Ok(response_bytes) -> {",
-              "      response.Response(",
+              "    Ok(response_bytes) ->",
+              "      Ok(response.Response(",
               "        status: 200,",
               "        headers: [#(\"content-type\", \"application/x-protobuf\")],",
               "        body: response_bytes,",
-              "      )",
-              "    }",
-              "    Error(service_error) -> {",
-              "      error_logger(service_error)",
-              "      service_error_to_http_response(service_error)",
-              "    }",
+              "      ))",
+              "    Error(service_error) -> Error(service_error)",
               "  }",
             ],
             "\n",
@@ -204,24 +197,16 @@ fn generate_http_adapter(method: Method, service_name: String) -> String {
               "      case "
                 <> service_function_name
                 <> "(request_bytes, handler) {",
-              "        Ok(response_bytes) -> {",
-              "          response.Response(",
+              "        Ok(response_bytes) ->",
+              "          Ok(response.Response(",
               "            status: 200,",
               "            headers: [#(\"content-type\", \"application/x-protobuf\")],",
               "            body: response_bytes,",
-              "          )",
-              "        }",
-              "        Error(service_error) -> {",
-              "          error_logger(service_error)",
-              "          service_error_to_http_response(service_error)",
-              "        }",
+              "          ))",
+              "        Error(service_error) -> Error(service_error)",
               "      }",
               "    }",
-              "    Error(_) -> {",
-              "      let err = DecodeError(\"Failed to parse query parameters\")",
-              "      error_logger(err)",
-              "      service_error_to_http_response(err)",
-              "    }",
+              "    Error(_) -> Error(DecodeError(\"Failed to parse query parameters\"))",
               "  }",
             ],
             "\n",
@@ -234,6 +219,7 @@ fn generate_http_adapter(method: Method, service_name: String) -> String {
           "/// HTTP adapter for " <> method.name,
           "/// " <> http_method_str <> " " <> path,
           "/// Uses gleam/http types (server-agnostic)",
+          "/// Returns Result for middleware pattern",
           "pub fn " <> function_name <> "(",
           "  req: request.Request(BitArray),",
           "  handler: fn("
@@ -243,8 +229,7 @@ fn generate_http_adapter(method: Method, service_name: String) -> String {
             <> ", "
             <> error_type
             <> "),",
-          "  error_logger: fn(ServiceError) -> Nil,",
-          ") -> response.Response(BitArray) {",
+          ") -> Result(response.Response(BitArray), ServiceError) {",
           request_processing,
           "}",
         ],

@@ -37,30 +37,99 @@ pub fn main() -> Nil {
   process.sleep_forever()
 }
 
-// Telemetry/logging function - customize this for your needs!
-// This is where you'd integrate with your metrics/logging system
-fn log_service_error(error: ServiceError) -> Nil {
-  case error {
-    proto.DecodeError(msg) -> {
-      io.println("[ERROR] Failed to decode request: " <> msg)
-      // Here you could emit metrics, send to logging service, etc.
-    }
-    proto.HandlerError(handler_error) -> {
-      io.println("[ERROR] Handler error: " <> string.inspect(handler_error))
-      // Here you could emit metrics, track error rates, etc.
+// Middleware pattern: Handle service results with logging/telemetry
+// This demonstrates how HTTP adapters return Result for flexible error handling
+fn handle_service_result(
+  result: Result(response.Response(BitArray), ServiceError),
+) -> response.Response(mist.ResponseData) {
+  case result {
+    Ok(http_response) ->
+      // Success - convert to Mist format
+      response.Response(
+        status: http_response.status,
+        headers: http_response.headers,
+        body: mist.Bytes(bytes_tree.from_bit_array(http_response.body)),
+      )
+    Error(service_error) -> {
+      // Error - log it (or emit metrics, track telemetry, etc.)
+      case service_error {
+        proto.DecodeError(msg) -> {
+          io.println("[ERROR] Failed to decode request: " <> msg)
+        }
+        proto.HandlerError(handler_error) -> {
+          io.println("[ERROR] Handler error: " <> string.inspect(handler_error))
+        }
+      }
+      // Convert error to HTTP response
+      let error_response = service_error_to_response(service_error)
+      response.Response(
+        status: error_response.status,
+        headers: error_response.headers,
+        body: mist.Bytes(bytes_tree.from_bit_array(error_response.body)),
+      )
     }
   }
 }
 
-// Mist adapter - converts gleam/http Response(BitArray) to Mist's Response(ResponseData)
-fn to_mist_response(
-  http_response: response.Response(BitArray),
-) -> response.Response(mist.ResponseData) {
-  response.Response(
-    status: http_response.status,
-    headers: http_response.headers,
-    body: mist.Bytes(bytes_tree.from_bit_array(http_response.body)),
-  )
+// Convert ServiceError to HTTP response
+fn service_error_to_response(error: ServiceError) -> response.Response(BitArray) {
+  case error {
+    proto.DecodeError(msg) ->
+      response.Response(
+        status: 400,
+        headers: [#("content-type", "text/plain")],
+        body: <<"Bad Request: ", msg:utf8>>,
+      )
+    proto.HandlerError(handler_error) ->
+      handler_error_to_response(handler_error)
+  }
+}
+
+// Convert handler-specific errors to HTTP responses
+fn handler_error_to_response(
+  error: TemperatureServiceError,
+) -> response.Response(BitArray) {
+  case error {
+    proto.NotFound ->
+      response.Response(
+        status: 404,
+        headers: [#("content-type", "text/plain")],
+        body: <<"Not Found":utf8>>,
+      )
+    proto.Unauthorized ->
+      response.Response(
+        status: 401,
+        headers: [
+          #("content-type", "text/plain"),
+          #("www-authenticate", "Bearer"),
+        ],
+        body: <<"Unauthorized":utf8>>,
+      )
+    proto.BadRequest(msg) ->
+      response.Response(
+        status: 400,
+        headers: [#("content-type", "text/plain")],
+        body: <<"Bad Request: ", msg:utf8>>,
+      )
+    proto.InvalidRequest(msg) ->
+      response.Response(
+        status: 400,
+        headers: [#("content-type", "text/plain")],
+        body: <<"Invalid Request: ", msg:utf8>>,
+      )
+    proto.InternalError(msg) ->
+      response.Response(
+        status: 500,
+        headers: [#("content-type", "text/plain")],
+        body: <<"Internal Error: ", msg:utf8>>,
+      )
+    proto.Unavailable(msg) ->
+      response.Response(
+        status: 503,
+        headers: [#("content-type", "text/plain"), #("retry-after", "60")],
+        body: <<"Service Unavailable: ", msg:utf8>>,
+      )
+  }
 }
 
 // Business logic handlers
@@ -158,11 +227,10 @@ fn handle_search_temperatures(
 }
 
 // HTTP service handler that routes requests to the generated HTTP handlers
-// This demonstrates the new transport-agnostic architecture:
+// This demonstrates the middleware pattern:
 // 1. Read body from Mist connection
-// 2. Call generated HTTP adapters (server-agnostic, use gleam/http types)
-// 3. Pass error logger for telemetry
-// 4. Convert response back to Mist format
+// 2. Call generated HTTP adapters (returns Result for middleware)
+// 3. Handle Result with custom middleware (logging, metrics, error conversion)
 fn service(
   req: request.Request(mist.Connection),
 ) -> response.Response(mist.ResponseData) {
@@ -178,19 +246,11 @@ fn service(
     ["v1", "sensors", _sensor_id, "temperatures"] -> {
       case req.method {
         http.Get ->
-          proto.http_get_temperature(
-            bit_req,
-            handle_get_temperature,
-            log_service_error,
-          )
-          |> to_mist_response
+          proto.http_get_temperature(bit_req, handle_get_temperature)
+          |> handle_service_result
         http.Put ->
-          proto.http_update_temperature(
-            bit_req,
-            handle_update_temperature,
-            log_service_error,
-          )
-          |> to_mist_response
+          proto.http_update_temperature(bit_req, handle_update_temperature)
+          |> handle_service_result
         _ ->
           response.new(404)
           |> response.set_body(mist.Bytes(bytes_tree.from_string("Not Found")))
@@ -200,12 +260,8 @@ fn service(
     ["v1", "locations", _location, "sensors", _sensor_id] -> {
       case req.method {
         http.Delete ->
-          proto.http_delete_temperature(
-            bit_req,
-            handle_delete_temperature,
-            log_service_error,
-          )
-          |> to_mist_response
+          proto.http_delete_temperature(bit_req, handle_delete_temperature)
+          |> handle_service_result
         _ ->
           response.new(404)
           |> response.set_body(mist.Bytes(bytes_tree.from_string("Not Found")))
@@ -216,19 +272,11 @@ fn service(
     ["v1", "temperatures"] -> {
       case req.method {
         http.Post ->
-          proto.http_create_temperature(
-            bit_req,
-            handle_create_temperature,
-            log_service_error,
-          )
-          |> to_mist_response
+          proto.http_create_temperature(bit_req, handle_create_temperature)
+          |> handle_service_result
         http.Get ->
-          proto.http_list_temperatures(
-            bit_req,
-            handle_list_temperatures,
-            log_service_error,
-          )
-          |> to_mist_response
+          proto.http_list_temperatures(bit_req, handle_list_temperatures)
+          |> handle_service_result
         _ ->
           response.new(404)
           |> response.set_body(mist.Bytes(bytes_tree.from_string("Not Found")))
@@ -238,12 +286,8 @@ fn service(
     ["v1", "temperatures", "search"] -> {
       case req.method {
         http.Patch ->
-          proto.http_search_temperatures(
-            bit_req,
-            handle_search_temperatures,
-            log_service_error,
-          )
-          |> to_mist_response
+          proto.http_search_temperatures(bit_req, handle_search_temperatures)
+          |> handle_service_result
         _ ->
           response.new(404)
           |> response.set_body(mist.Bytes(bytes_tree.from_string("Not Found")))
