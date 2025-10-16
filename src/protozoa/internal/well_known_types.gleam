@@ -414,7 +414,9 @@ fn annotations_proto() -> parser.ProtoFile {
   parser.ProtoFile(
     syntax: "proto3",
     package: option.Some("google.api"),
-    imports: [parser.Import(path: "google/api/http.proto", public: False, weak: False)],
+    imports: [
+      parser.Import(path: "google/api/http.proto", public: False, weak: False),
+    ],
     messages: [],
     enums: [],
     services: [],

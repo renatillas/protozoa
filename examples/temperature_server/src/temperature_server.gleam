@@ -46,9 +46,7 @@ fn log_service_error(error: ServiceError) -> Nil {
       // Here you could emit metrics, send to logging service, etc.
     }
     proto.HandlerError(handler_error) -> {
-      io.println(
-        "[ERROR] Handler error: " <> string.inspect(handler_error),
-      )
+      io.println("[ERROR] Handler error: " <> string.inspect(handler_error))
       // Here you could emit metrics, track error rates, etc.
     }
   }

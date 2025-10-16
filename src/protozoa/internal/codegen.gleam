@@ -434,8 +434,10 @@ fn has_float_query_params(proto_file: ProtoFile) -> Bool {
         |> list.any(fn(field) {
           case field.field_type {
             parser.Float | parser.Double -> True
-            parser.Repeated(parser.Float) | parser.Repeated(parser.Double) -> True
-            parser.Optional(parser.Float) | parser.Optional(parser.Double) -> True
+            parser.Repeated(parser.Float) | parser.Repeated(parser.Double) ->
+              True
+            parser.Optional(parser.Float) | parser.Optional(parser.Double) ->
+              True
             _ -> False
           }
         })

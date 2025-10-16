@@ -52,9 +52,7 @@ pub fn generate_service_router(
       // Generate Layer 2: HTTP adapter functions (gleam/http types)
       let http_adapters =
         list.filter(methods, has_http_annotation)
-        |> list.map(fn(method) {
-          generate_http_adapter(method, service.name)
-        })
+        |> list.map(fn(method) { generate_http_adapter(method, service.name) })
         |> string.join("\n\n")
 
       // Generate error types and converters
@@ -118,9 +116,7 @@ fn generate_service_function(method: Method, service_name: String) -> String {
     [
       "/// Service function for " <> method.name,
       "/// Handles protobuf encoding/decoding, returns encoded response or error",
-      "pub fn "
-        <> function_name
-        <> "(",
+      "pub fn " <> function_name <> "(",
       "  request_bytes: BitArray,",
       "  handler: fn("
         <> request_type
@@ -177,9 +173,7 @@ fn generate_http_adapter(method: Method, service_name: String) -> String {
           string.join(
             [
               "  let request_bytes = req.body",
-              "  case "
-                <> service_function_name
-                <> "(request_bytes, handler) {",
+              "  case " <> service_function_name <> "(request_bytes, handler) {",
               "    Ok(response_bytes) -> {",
               "      response.Response(",
               "        status: 200,",
@@ -240,9 +234,7 @@ fn generate_http_adapter(method: Method, service_name: String) -> String {
           "/// HTTP adapter for " <> method.name,
           "/// " <> http_method_str <> " " <> path,
           "/// Uses gleam/http types (server-agnostic)",
-          "pub fn "
-            <> function_name
-            <> "(",
+          "pub fn " <> function_name <> "(",
           "  req: request.Request(BitArray),",
           "  handler: fn("
             <> request_type
@@ -737,19 +729,20 @@ fn analyze_needed_helpers(
   messages: List(Message),
 ) -> NeededHelpers {
   // Start with all helpers disabled
-  let initial = NeededHelpers(
-    path_extraction: False,
-    path_string: False,
-    path_int: False,
-    query_string: False,
-    query_int: False,
-    query_bool: False,
-    query_float: False,
-    query_list_string: False,
-    query_list_int: False,
-    query_optional_string: False,
-    query_optional_int: False,
-  )
+  let initial =
+    NeededHelpers(
+      path_extraction: False,
+      path_string: False,
+      path_int: False,
+      query_string: False,
+      query_int: False,
+      query_bool: False,
+      query_float: False,
+      query_list_string: False,
+      query_list_int: False,
+      query_optional_string: False,
+      query_optional_int: False,
+    )
 
   // Analyze each method that uses GET/DELETE (query/path params)
   list.fold(service.methods, initial, fn(acc, method) {
@@ -768,12 +761,18 @@ fn analyze_needed_helpers(
             // Analyze each field
             list.fold(message.fields, acc, fn(field_acc, field) {
               let field_name_lower = string.lowercase(field.name)
-              let is_path_param = list.any(path_params, fn(param) {
-                string.lowercase(param) == field_name_lower
-              })
+              let is_path_param =
+                list.any(path_params, fn(param) {
+                  string.lowercase(param) == field_name_lower
+                })
 
               case is_path_param {
-                True -> analyze_path_param_type(field.field_type, field_acc, has_path_params)
+                True ->
+                  analyze_path_param_type(
+                    field.field_type,
+                    field_acc,
+                    has_path_params,
+                  )
                 False -> analyze_query_param_type(field.field_type, field_acc)
               }
             })
@@ -1355,4 +1354,3 @@ fn generate_query_param_helpers() -> String {
     "\n",
   )
 }
-
