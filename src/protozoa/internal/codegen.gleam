@@ -277,19 +277,16 @@ fn determine_needed_imports(proto_file: ProtoFile) -> List(String) {
     False -> imports
   }
 
-  // Add imports for HTTP routers if we have services with methods
-  let has_http_routers = has_services_with_http_methods(proto_file)
-  let imports = case has_http_routers {
+  // Add imports for HTTP adapters if we have services with HTTP methods
+  let has_http_adapters = has_services_with_http_methods(proto_file)
+  let imports = case has_http_adapters {
     True -> {
       let base_http_imports = [
-        "import gleam/bytes_tree",
-        "import gleam/http",
         "import gleam/http/request",
         "import gleam/http/response",
         "import gleam/int",
         "import gleam/list",
         "import gleam/string",
-        "import mist",
         ..imports
       ]
 

@@ -5,11 +5,12 @@ import gleam/http/request
 import gleam/http/response
 import gleam/int
 import gleam/io
+import gleam/string
 import mist
 import temperature_server/proto/proto.{
   type CreateTemperatureRequest, type DeleteTemperatureRequest,
   type GetTemperatureRequest, type ListTemperaturesRequest,
-  type SearchTemperaturesRequest, type TemperatureResponse,
+  type SearchTemperaturesRequest, type ServiceError, type TemperatureResponse,
   type TemperatureServiceError, type UpdateTemperatureRequest,
   TemperatureResponse,
 }
@@ -34,6 +35,34 @@ pub fn main() -> Nil {
 
   // Keep the server running
   process.sleep_forever()
+}
+
+// Telemetry/logging function - customize this for your needs!
+// This is where you'd integrate with your metrics/logging system
+fn log_service_error(error: ServiceError) -> Nil {
+  case error {
+    proto.DecodeError(msg) -> {
+      io.println("[ERROR] Failed to decode request: " <> msg)
+      // Here you could emit metrics, send to logging service, etc.
+    }
+    proto.HandlerError(handler_error) -> {
+      io.println(
+        "[ERROR] Handler error: " <> string.inspect(handler_error),
+      )
+      // Here you could emit metrics, track error rates, etc.
+    }
+  }
+}
+
+// Mist adapter - converts gleam/http Response(BitArray) to Mist's Response(ResponseData)
+fn to_mist_response(
+  http_response: response.Response(BitArray),
+) -> response.Response(mist.ResponseData) {
+  response.Response(
+    status: http_response.status,
+    headers: http_response.headers,
+    body: mist.Bytes(bytes_tree.from_bit_array(http_response.body)),
+  )
 }
 
 // Business logic handlers
@@ -131,6 +160,11 @@ fn handle_search_temperatures(
 }
 
 // HTTP service handler that routes requests to the generated HTTP handlers
+// This demonstrates the new transport-agnostic architecture:
+// 1. Read body from Mist connection
+// 2. Call generated HTTP adapters (server-agnostic, use gleam/http types)
+// 3. Pass error logger for telemetry
+// 4. Convert response back to Mist format
 fn service(
   req: request.Request(mist.Connection),
 ) -> response.Response(mist.ResponseData) {
@@ -145,9 +179,20 @@ fn service(
     // PUT /v1/sensors/{sensor_id}/temperatures
     ["v1", "sensors", _sensor_id, "temperatures"] -> {
       case req.method {
-        http.Get -> proto.http_get_temperature(bit_req, handle_get_temperature)
+        http.Get ->
+          proto.http_get_temperature(
+            bit_req,
+            handle_get_temperature,
+            log_service_error,
+          )
+          |> to_mist_response
         http.Put ->
-          proto.http_update_temperature(bit_req, handle_update_temperature)
+          proto.http_update_temperature(
+            bit_req,
+            handle_update_temperature,
+            log_service_error,
+          )
+          |> to_mist_response
         _ ->
           response.new(404)
           |> response.set_body(mist.Bytes(bytes_tree.from_string("Not Found")))
@@ -157,7 +202,12 @@ fn service(
     ["v1", "locations", _location, "sensors", _sensor_id] -> {
       case req.method {
         http.Delete ->
-          proto.http_delete_temperature(bit_req, handle_delete_temperature)
+          proto.http_delete_temperature(
+            bit_req,
+            handle_delete_temperature,
+            log_service_error,
+          )
+          |> to_mist_response
         _ ->
           response.new(404)
           |> response.set_body(mist.Bytes(bytes_tree.from_string("Not Found")))
@@ -168,9 +218,19 @@ fn service(
     ["v1", "temperatures"] -> {
       case req.method {
         http.Post ->
-          proto.http_create_temperature(bit_req, handle_create_temperature)
+          proto.http_create_temperature(
+            bit_req,
+            handle_create_temperature,
+            log_service_error,
+          )
+          |> to_mist_response
         http.Get ->
-          proto.http_list_temperatures(bit_req, handle_list_temperatures)
+          proto.http_list_temperatures(
+            bit_req,
+            handle_list_temperatures,
+            log_service_error,
+          )
+          |> to_mist_response
         _ ->
           response.new(404)
           |> response.set_body(mist.Bytes(bytes_tree.from_string("Not Found")))
@@ -180,7 +240,12 @@ fn service(
     ["v1", "temperatures", "search"] -> {
       case req.method {
         http.Patch ->
-          proto.http_search_temperatures(bit_req, handle_search_temperatures)
+          proto.http_search_temperatures(
+            bit_req,
+            handle_search_temperatures,
+            log_service_error,
+          )
+          |> to_mist_response
         _ ->
           response.new(404)
           |> response.set_body(mist.Bytes(bytes_tree.from_string("Not Found")))

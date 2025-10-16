@@ -424,7 +424,7 @@ pub fn well_known_types_test() {
   // Test that well-known types are available
   let well_known_proto_files = well_known_types.get_well_known_proto_files()
 
-  assert 7 == dict.size(well_known_proto_files)
+  assert 9 == dict.size(well_known_proto_files)
 
   let assert Ok(parser.ProtoFile(
     package: option.Some("google.protobuf"),

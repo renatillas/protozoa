@@ -1,13 +1,16 @@
-//// HTTP Router Code Generation Module
+//// Service Code Generation Module
 ////
-//// This module generates Mist HTTP router code from Protocol Buffer service definitions.
-//// It creates:
-//// - Service router functions that map HTTP routes to handler functions
-//// - HTTP request/response wrapper functions
-//// - Error response formatting
-//// - Request parameter extraction from paths, queries, and bodies
+//// This module generates transport-agnostic service code from Protocol Buffer service definitions.
+//// It creates three layers:
+//// 1. Core Service Layer: Pure protobuf encoding/decoding (BitArray -> Result)
+//// 2. HTTP Adapter Layer: Standard gleam/http types (server-agnostic)
+//// 3. Metadata and error types for telemetry/logging
 ////
-//// Generates code compatible with Mist 5.x
+//// This design allows:
+//// - Easy testing (pure functions with BitArray)
+//// - Flexibility (works with Mist, Wisp, or any gleam/http-compatible server)
+//// - Telemetry (error logging, metrics collection)
+//// - Less opinionated (library focuses on protobuf, not transport)
 
 import gleam/list
 import gleam/option.{None, Some}
@@ -31,7 +34,7 @@ fn extract_path_params(path: String) -> List(String) {
   |> list.filter(fn(s) { s != "" })
 }
 
-/// Generate a Mist service function setup for a service
+/// Generate service code with three layers of abstraction
 pub fn generate_service_router(
   service: Service,
   messages: List(Message),
@@ -39,45 +42,121 @@ pub fn generate_service_router(
   case service.methods {
     [] -> ""
     methods -> {
-      let method_handlers =
+      // Generate Layer 1: Core service functions (BitArray -> Result)
+      let service_functions =
         list.map(methods, fn(method) {
-          generate_method_handler(method, service.name)
+          generate_service_function(method, service.name)
         })
-      let handlers = string.join(method_handlers, "\n\n")
-      let error_formatter = generate_error_formatter(service)
-      let query_helpers = generate_query_helpers_for_service(service, messages)
+        |> string.join("\n\n")
 
-      // Analyze which helper functions are actually needed
+      // Generate Layer 2: HTTP adapter functions (gleam/http types)
+      let http_adapters =
+        list.filter(methods, has_http_annotation)
+        |> list.map(fn(method) {
+          generate_http_adapter(method, service.name)
+        })
+        |> string.join("\n\n")
+
+      // Generate error types and converters
+      let service_error_type = generate_service_error_type(service)
+      let error_converter = generate_error_converter(service)
+
+      // Generate query parameter helpers only for GET/DELETE methods
       let needed_helpers = analyze_needed_helpers(service, messages)
-      let query_param_helpers = generate_query_param_helpers_conditional(needed_helpers)
+      let query_helpers = generate_query_helpers_for_service(service, messages)
+      let query_param_helpers =
+        generate_query_param_helpers_conditional(needed_helpers)
 
       string.join(
         [
-          "/// Auto-generated service setup for " <> service.name,
-          "/// Register these handlers with your Mist application",
+          "/// Auto-generated service for " <> service.name,
+          "/// ",
+          "/// Layer 1: Core service functions (transport-agnostic)",
+          "/// Layer 2: HTTP adapters (works with gleam/http)",
+          "/// ",
+          "/// Error types support telemetry and logging",
           "",
-          handlers,
+          service_error_type,
           "",
-          error_formatter,
+          service_functions,
+          "",
+          http_adapters,
+          "",
+          error_converter,
           "",
           query_helpers,
           "",
           query_param_helpers,
-        ],
+        ]
+          |> list.filter(fn(s) { !string.is_empty(s) }),
         "\n",
       )
     }
   }
 }
 
-/// Generate a single HTTP handler from method definition
-/// These handlers accept a business logic function as an argument
-fn generate_method_handler(method: Method, service_name: String) -> String {
+/// Check if a method has HTTP annotations
+fn has_http_annotation(method: Method) -> Bool {
+  case method.http_method, method.http_path {
+    Some(_), Some(_) -> True
+    _, _ -> False
+  }
+}
+
+/// Generate Layer 1: Core service function (transport-agnostic)
+/// This function handles protobuf encoding/decoding
+fn generate_service_function(method: Method, service_name: String) -> String {
+  let function_name = justin.snake_case(method.name) <> "_service"
+  let request_type = method.input_type
+  let response_type = method.output_type
+  let error_type = service_name <> "Error"
+
+  let decoder_name = justin.snake_case(request_type) <> "_decoder()"
+  let encoder_name = "encode_" <> justin.snake_case(response_type)
+
+  string.join(
+    [
+      "/// Service function for " <> method.name,
+      "/// Handles protobuf encoding/decoding, returns encoded response or error",
+      "pub fn "
+        <> function_name
+        <> "(",
+      "  request_bytes: BitArray,",
+      "  handler: fn("
+        <> request_type
+        <> ") -> Result("
+        <> response_type
+        <> ", "
+        <> error_type
+        <> "),",
+      ") -> Result(BitArray, ServiceError) {",
+      "  case decode.run(request_bytes, with: " <> decoder_name <> ") {",
+      "    Ok(proto_request) -> {",
+      "      case handler(proto_request) {",
+      "        Ok(response) -> Ok(" <> encoder_name <> "(response))",
+      "        Error(err) -> Error(HandlerError(err))",
+      "      }",
+      "    }",
+      "    Error(_) -> Error(DecodeError(\"Failed to decode "
+        <> request_type
+        <> "\"))",
+      "  }",
+      "}",
+    ],
+    "\n",
+  )
+}
+
+/// Generate Layer 2: HTTP adapter function
+/// This function uses gleam/http types and is server-agnostic
+fn generate_http_adapter(method: Method, service_name: String) -> String {
   case method.http_method, method.http_path {
     Some(http_method), Some(path) -> {
-      let handler_name = "http_" <> justin.snake_case(method.name)
+      let function_name = "http_" <> justin.snake_case(method.name)
+      let service_function_name = justin.snake_case(method.name) <> "_service"
       let request_type = method.input_type
       let response_type = method.output_type
+      let error_type = service_name <> "Error"
 
       let http_method_str = case http_method {
         parser.Get -> "GET"
@@ -87,85 +166,67 @@ fn generate_method_handler(method: Method, service_name: String) -> String {
         parser.Patch -> "PATCH"
       }
 
-      let http_method_pattern = case http_method {
-        parser.Get -> "http.Get"
-        parser.Post -> "http.Post"
-        parser.Put -> "http.Put"
-        parser.Delete -> "http.Delete"
-        parser.Patch -> "http.Patch"
-      }
-
-      let decoder_name = justin.snake_case(request_type) <> "_decoder()"
-      let encoder_name = "encode_" <> justin.snake_case(response_type)
-
       // Determine if this method should read from body or query params
       let reads_from_body = case http_method {
         parser.Post | parser.Put | parser.Patch -> True
         parser.Get | parser.Delete -> False
       }
 
-      let handler_body = case reads_from_body {
+      let request_processing = case reads_from_body {
         True ->
           string.join(
             [
-              "  case req.method {",
-              "    " <> http_method_pattern <> " -> {",
-              "      case decode.run(req.body, with: " <> decoder_name <> ") {",
-              "        Ok(proto_request) -> {",
-              "          case handler(proto_request) {",
-              "            Ok(response) -> {",
-              "              response.new(200)",
-              "              |> response.set_body(mist.Bytes(bytes_tree.from_bit_array("
-                <> encoder_name
-                <> "(response))))",
-              "            }",
-              "            Error(err) -> format_error_response(err)",
-              "          }",
-              "        }",
-              "        Error(_) -> {",
-              "          response.new(400)",
-              "          |> response.set_body(mist.Bytes(bytes_tree.from_string(\"Invalid request body\")))",
-              "        }",
-              "      }",
+              "  let request_bytes = req.body",
+              "  case "
+                <> service_function_name
+                <> "(request_bytes, handler) {",
+              "    Ok(response_bytes) -> {",
+              "      response.Response(",
+              "        status: 200,",
+              "        headers: [#(\"content-type\", \"application/x-protobuf\")],",
+              "        body: response_bytes,",
+              "      )",
               "    }",
-              "    _ -> {",
-              "      response.new(405)",
-              "      |> response.set_body(mist.Bytes(bytes_tree.from_string(\"Method not allowed\")))",
+              "    Error(service_error) -> {",
+              "      error_logger(service_error)",
+              "      service_error_to_http_response(service_error)",
               "    }",
               "  }",
             ],
             "\n",
           )
         False -> {
-          // Use method-specific query parameter mapper
           let query_mapper_name =
             "format_query_request_for_" <> justin.snake_case(method.name)
-
           string.join(
             [
-              "  case req.method {",
-              "    " <> http_method_pattern <> " -> {",
-              "      case " <> query_mapper_name <> "(req) {",
-              "        Ok(proto_request) -> {",
-              "          case handler(proto_request) {",
-              "            Ok(response) -> {",
-              "              response.new(200)",
-              "              |> response.set_body(mist.Bytes(bytes_tree.from_bit_array("
-                <> encoder_name
-                <> "(response))))",
-              "            }",
-              "            Error(err) -> format_error_response(err)",
-              "          }",
+              "  // Extract request from query/path parameters",
+              "  case " <> query_mapper_name <> "(req) {",
+              "    Ok(proto_request) -> {",
+              "      // Encode the request to bytes for the service function",
+              "      let request_bytes = encode_"
+                <> justin.snake_case(request_type)
+                <> "(proto_request)",
+              "      case "
+                <> service_function_name
+                <> "(request_bytes, handler) {",
+              "        Ok(response_bytes) -> {",
+              "          response.Response(",
+              "            status: 200,",
+              "            headers: [#(\"content-type\", \"application/x-protobuf\")],",
+              "            body: response_bytes,",
+              "          )",
               "        }",
-              "        Error(_) -> {",
-              "          response.new(400)",
-              "          |> response.set_body(mist.Bytes(bytes_tree.from_string(\"Invalid request\")))",
+              "        Error(service_error) -> {",
+              "          error_logger(service_error)",
+              "          service_error_to_http_response(service_error)",
               "        }",
               "      }",
               "    }",
-              "    _ -> {",
-              "      response.new(405)",
-              "      |> response.set_body(mist.Bytes(bytes_tree.from_string(\"Method not allowed\")))",
+              "    Error(_) -> {",
+              "      let err = DecodeError(\"Failed to parse query parameters\")",
+              "      error_logger(err)",
+              "      service_error_to_http_response(err)",
               "    }",
               "  }",
             ],
@@ -174,28 +235,25 @@ fn generate_method_handler(method: Method, service_name: String) -> String {
         }
       }
 
-      // Create function signature that accepts request and handler function
-      let service_error_type = service_name <> "Error"
-      let handler_fn_type =
-        "fn("
-        <> request_type
-        <> ") -> Result("
-        <> response_type
-        <> ", "
-        <> service_error_type
-        <> ")"
-
       string.join(
         [
-          "/// HTTP " <> http_method_str <> " " <> path,
-          "/// Accepts a handler function that processes the request",
+          "/// HTTP adapter for " <> method.name,
+          "/// " <> http_method_str <> " " <> path,
+          "/// Uses gleam/http types (server-agnostic)",
           "pub fn "
-            <> handler_name
+            <> function_name
             <> "(",
           "  req: request.Request(BitArray),",
-          "  handler: " <> handler_fn_type <> ",",
-          ") -> response.Response(mist.ResponseData) {",
-          handler_body,
+          "  handler: fn("
+            <> request_type
+            <> ") -> Result("
+            <> response_type
+            <> ", "
+            <> error_type
+            <> "),",
+          "  error_logger: fn(ServiceError) -> Nil,",
+          ") -> response.Response(BitArray) {",
+          request_processing,
           "}",
         ],
         "\n",
@@ -205,43 +263,87 @@ fn generate_method_handler(method: Method, service_name: String) -> String {
   }
 }
 
-/// Generate error response formatter for service errors
-pub fn generate_error_formatter(service: Service) -> String {
+/// Generate ServiceError type - wraps either decode errors or handler errors
+/// This allows for logging and telemetry before converting to HTTP responses
+pub fn generate_service_error_type(service: Service) -> String {
+  let error_type = service.name <> "Error"
+  string.join(
+    [
+      "/// Service-level errors that can occur during request processing",
+      "/// These can be logged for telemetry before converting to HTTP responses",
+      "pub type ServiceError {",
+      "  /// Failed to decode the protobuf request",
+      "  DecodeError(String)",
+      "  /// Handler returned an error",
+      "  HandlerError(" <> error_type <> ")",
+      "}",
+    ],
+    "\n",
+  )
+}
+
+/// Generate error converter from ServiceError to HTTP response
+pub fn generate_error_converter(service: Service) -> String {
   let error_type = service.name <> "Error"
 
   string.join(
     [
-      "/// Format service errors as HTTP responses using standard HTTP status codes",
-      "fn format_error_response(error: "
+      "/// Convert ServiceError to HTTP response",
+      "/// This is used by the HTTP adapter layer",
+      "fn service_error_to_http_response(error: ServiceError) -> response.Response(BitArray) {",
+      "  case error {",
+      "    DecodeError(msg) ->",
+      "      response.Response(",
+      "        status: 400,",
+      "        headers: [#(\"content-type\", \"text/plain\")],",
+      "        body: <<\"Bad Request: \", msg:utf8>>",
+      "      )",
+      "    HandlerError(handler_err) ->",
+      "      handler_error_to_http_response(handler_err)",
+      "  }",
+      "}",
+      "",
+      "/// Convert handler-specific errors to HTTP responses",
+      "fn handler_error_to_http_response(error: "
         <> error_type
-        <> ") -> response.Response(mist.ResponseData) {",
+        <> ") -> response.Response(BitArray) {",
       "  case error {",
       "    NotFound ->",
-      "      response.new(404)",
-      "      |> response.prepend_header(\"content-type\", \"text/plain\")",
-      "      |> response.set_body(mist.Bytes(bytes_tree.from_string(\"Not Found\")))",
+      "      response.Response(",
+      "        status: 404,",
+      "        headers: [#(\"content-type\", \"text/plain\")],",
+      "        body: <<\"Not Found\":utf8>>",
+      "      )",
       "    Unauthorized ->",
-      "      response.new(401)",
-      "      |> response.prepend_header(\"content-type\", \"text/plain\")",
-      "      |> response.prepend_header(\"www-authenticate\", \"Bearer\")",
-      "      |> response.set_body(mist.Bytes(bytes_tree.from_string(\"Unauthorized\")))",
+      "      response.Response(",
+      "        status: 401,",
+      "        headers: [#(\"content-type\", \"text/plain\"), #(\"www-authenticate\", \"Bearer\")],",
+      "        body: <<\"Unauthorized\":utf8>>",
+      "      )",
       "    BadRequest(msg) ->",
-      "      response.new(400)",
-      "      |> response.prepend_header(\"content-type\", \"text/plain\")",
-      "      |> response.set_body(mist.Bytes(bytes_tree.from_string(\"Bad Request: \" <> msg)))",
+      "      response.Response(",
+      "        status: 400,",
+      "        headers: [#(\"content-type\", \"text/plain\")],",
+      "        body: <<\"Bad Request: \", msg:utf8>>",
+      "      )",
       "    InvalidRequest(msg) ->",
-      "      response.new(400)",
-      "      |> response.prepend_header(\"content-type\", \"text/plain\")",
-      "      |> response.set_body(mist.Bytes(bytes_tree.from_string(\"Invalid Request: \" <> msg)))",
+      "      response.Response(",
+      "        status: 400,",
+      "        headers: [#(\"content-type\", \"text/plain\")],",
+      "        body: <<\"Invalid Request: \", msg:utf8>>",
+      "      )",
       "    InternalError(msg) ->",
-      "      response.new(500)",
-      "      |> response.prepend_header(\"content-type\", \"text/plain\")",
-      "      |> response.set_body(mist.Bytes(bytes_tree.from_string(\"Internal Error: \" <> msg)))",
+      "      response.Response(",
+      "        status: 500,",
+      "        headers: [#(\"content-type\", \"text/plain\")],",
+      "        body: <<\"Internal Error: \", msg:utf8>>",
+      "      )",
       "    Unavailable(msg) ->",
-      "      response.new(503)",
-      "      |> response.prepend_header(\"content-type\", \"text/plain\")",
-      "      |> response.prepend_header(\"retry-after\", \"60\")",
-      "      |> response.set_body(mist.Bytes(bytes_tree.from_string(\"Service Unavailable: \" <> msg)))",
+      "      response.Response(",
+      "        status: 503,",
+      "        headers: [#(\"content-type\", \"text/plain\"), #(\"retry-after\", \"60\")],",
+      "        body: <<\"Service Unavailable: \", msg:utf8>>",
+      "      )",
       "  }",
       "}",
     ],
