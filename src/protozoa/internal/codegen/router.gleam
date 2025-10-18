@@ -34,7 +34,58 @@ fn extract_path_params(path: String) -> List(String) {
   |> list.filter(fn(s) { s != "" })
 }
 
-/// Generate service code with three layers of abstraction
+/// Generate service code with three layers of abstraction (without helpers)
+pub fn generate_service_router_without_helpers(
+  service: Service,
+  messages: List(Message),
+) -> String {
+  case service.methods {
+    [] -> ""
+    methods -> {
+      // Generate Layer 1: Core service functions (BitArray -> Result)
+      let service_functions =
+        list.map(methods, fn(method) {
+          generate_service_function(method, service.name)
+        })
+        |> string.join("\n\n")
+
+      // Generate Layer 2: HTTP adapter functions (gleam/http types)
+      let http_adapters =
+        list.filter(methods, has_http_annotation)
+        |> list.map(fn(method) { generate_http_adapter(method, service.name) })
+        |> string.join("\n\n")
+
+      // Generate error type
+      let service_error_type = generate_service_error_type(service)
+
+      // Generate query parameter helpers only for GET/DELETE methods
+      let query_helpers = generate_query_helpers_for_service(service, messages)
+
+      string.join(
+        [
+          "/// Auto-generated service for " <> service.name,
+          "/// ",
+          "/// Layer 1: Core service functions (transport-agnostic BitArray -> Result)",
+          "/// Layer 2: HTTP adapters (gleam/http types, returns Result for middleware)",
+          "/// ",
+          "/// HTTP adapters return Result(Response, ServiceError) for middleware pattern",
+          "",
+          service_error_type,
+          "",
+          service_functions,
+          "",
+          http_adapters,
+          "",
+          query_helpers,
+        ]
+          |> list.filter(fn(s) { !string.is_empty(s) }),
+        "\n",
+      )
+    }
+  }
+}
+
+/// Generate service code with three layers of abstraction (deprecated - use generate_service_router_without_helpers)
 pub fn generate_service_router(
   service: Service,
   messages: List(Message),
@@ -104,7 +155,9 @@ fn generate_service_function(method: Method, service_name: String) -> String {
   let function_name = justin.snake_case(method.name) <> "_service"
   let request_type = method.input_type
   let response_type = method.output_type
-  let error_type = service_name <> "Error"
+  let handler_error_type = justin.pascal_case(service_name) <> "Error"
+  let service_error_type = justin.pascal_case(service_name) <> "RequestError"
+  let prefix = justin.pascal_case(service_name)
 
   let decoder_name = justin.snake_case(request_type) <> "_decoder()"
   let encoder_name = "encode_" <> justin.snake_case(response_type)
@@ -120,17 +173,19 @@ fn generate_service_function(method: Method, service_name: String) -> String {
         <> ") -> Result("
         <> response_type
         <> ", "
-        <> error_type
+        <> handler_error_type
         <> "),",
-      ") -> Result(BitArray, ServiceError) {",
+      ") -> Result(BitArray, " <> service_error_type <> ") {",
       "  case decode.run(request_bytes, with: " <> decoder_name <> ") {",
       "    Ok(proto_request) -> {",
       "      case handler(proto_request) {",
       "        Ok(response) -> Ok(" <> encoder_name <> "(response))",
-      "        Error(err) -> Error(HandlerError(err))",
+      "        Error(err) -> Error(" <> prefix <> "HandlerError(err))",
       "      }",
       "    }",
-      "    Error(_) -> Error(DecodeError(\"Failed to decode "
+      "    Error(_) -> Error("
+        <> prefix
+        <> "DecodeError(\"Failed to decode "
         <> request_type
         <> "\"))",
       "  }",
@@ -149,7 +204,9 @@ fn generate_http_adapter(method: Method, service_name: String) -> String {
       let service_function_name = justin.snake_case(method.name) <> "_service"
       let request_type = method.input_type
       let response_type = method.output_type
-      let error_type = service_name <> "Error"
+      let handler_error_type = justin.pascal_case(service_name) <> "Error"
+      let service_error_type = justin.pascal_case(service_name) <> "RequestError"
+      let prefix = justin.pascal_case(service_name)
 
       let http_method_str = case http_method {
         parser.Get -> "GET"
@@ -206,7 +263,9 @@ fn generate_http_adapter(method: Method, service_name: String) -> String {
               "        Error(service_error) -> Error(service_error)",
               "      }",
               "    }",
-              "    Error(_) -> Error(DecodeError(\"Failed to parse query parameters\"))",
+              "    Error(_) -> Error("
+                <> prefix
+                <> "DecodeError(\"Failed to parse query parameters\"))",
               "  }",
             ],
             "\n",
@@ -227,9 +286,9 @@ fn generate_http_adapter(method: Method, service_name: String) -> String {
             <> ") -> Result("
             <> response_type
             <> ", "
-            <> error_type
+            <> handler_error_type
             <> "),",
-          ") -> Result(response.Response(BitArray), ServiceError) {",
+          ") -> Result(response.Response(BitArray), " <> service_error_type <> ") {",
           request_processing,
           "}",
         ],
@@ -242,17 +301,20 @@ fn generate_http_adapter(method: Method, service_name: String) -> String {
 
 /// Generate ServiceError type - wraps either decode errors or handler errors
 /// This allows for logging and telemetry before converting to HTTP responses
+/// Named per-service to avoid collisions when multiple services exist
 pub fn generate_service_error_type(service: Service) -> String {
-  let error_type = service.name <> "Error"
+  let handler_error_type = justin.pascal_case(service.name) <> "Error"
+  let service_error_type = justin.pascal_case(service.name) <> "RequestError"
+  let prefix = justin.pascal_case(service.name)
   string.join(
     [
-      "/// Service-level errors that can occur during request processing",
+      "/// Service-level errors for " <> service.name,
       "/// These can be logged for telemetry before converting to HTTP responses",
-      "pub type ServiceError {",
+      "pub type " <> service_error_type <> " {",
       "  /// Failed to decode the protobuf request",
-      "  DecodeError(String)",
+      "  " <> prefix <> "DecodeError(String)",
       "  /// Handler returned an error",
-      "  HandlerError(" <> error_type <> ")",
+      "  " <> prefix <> "HandlerError(" <> handler_error_type <> ")",
       "}",
     ],
     "\n",
@@ -708,8 +770,25 @@ pub type NeededHelpers {
   )
 }
 
+/// Merge two NeededHelpers by OR-ing all fields
+pub fn merge_needed_helpers(a: NeededHelpers, b: NeededHelpers) -> NeededHelpers {
+  NeededHelpers(
+    path_extraction: a.path_extraction || b.path_extraction,
+    path_string: a.path_string || b.path_string,
+    path_int: a.path_int || b.path_int,
+    query_string: a.query_string || b.query_string,
+    query_int: a.query_int || b.query_int,
+    query_bool: a.query_bool || b.query_bool,
+    query_float: a.query_float || b.query_float,
+    query_list_string: a.query_list_string || b.query_list_string,
+    query_list_int: a.query_list_int || b.query_list_int,
+    query_optional_string: a.query_optional_string || b.query_optional_string,
+    query_optional_int: a.query_optional_int || b.query_optional_int,
+  )
+}
+
 /// Analyze the service to determine which helper functions are actually needed
-fn analyze_needed_helpers(
+pub fn analyze_needed_helpers(
   service: Service,
   messages: List(Message),
 ) -> NeededHelpers {
@@ -850,7 +929,7 @@ fn analyze_query_param_type(
 }
 
 /// Generate path and query parameter helper functions (conditional)
-fn generate_query_param_helpers_conditional(needed: NeededHelpers) -> String {
+pub fn generate_query_param_helpers_conditional(needed: NeededHelpers) -> String {
   let helpers = []
 
   // Path extraction helpers

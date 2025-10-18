@@ -155,13 +155,12 @@ fn generate_file_content_sections(
       proto_file.messages,
     )
   let service_stubs = generate_service_stubs(proto_file.services)
-  let service_routers =
-    proto_file.services
-    |> list.map(fn(service) {
-      router.generate_service_router(service, proto_file.messages)
-    })
-    |> list.filter(fn(s) { !string.is_empty(s) })
-    |> string.join("\n\n")
+  let #(service_routers, helper_functions) =
+    generate_all_service_routers(proto_file.services, proto_file.messages)
+  let service_routers = service_routers <> case string.is_empty(helper_functions) {
+    True -> ""
+    False -> "\n\n" <> helper_functions
+  }
 
   Ok(ContentSections(
     enum_types: enum_types,
@@ -762,6 +761,57 @@ fn generate_stringvalue_definition() -> String {
   string.join(lines, "\n")
 }
 
+/// Generate all service routers and collect shared helper functions
+fn generate_all_service_routers(
+  services: List(parser.Service),
+  messages: List(parser.Message),
+) -> #(String, String) {
+  case services {
+    [] -> #("", "")
+    _ -> {
+      // Generate routers for each service (without helpers)
+      let routers =
+        services
+        |> list.map(fn(service) {
+          router.generate_service_router_without_helpers(service, messages)
+        })
+        |> list.filter(fn(s) { !string.is_empty(s) })
+        |> string.join("\n\n")
+
+      // Collect all needed helpers from all services
+      let all_needed_helpers =
+        services
+        |> list.fold(
+          router.NeededHelpers(
+            path_extraction: False,
+            path_string: False,
+            path_int: False,
+            query_string: False,
+            query_int: False,
+            query_bool: False,
+            query_float: False,
+            query_list_string: False,
+            query_list_int: False,
+            query_optional_string: False,
+            query_optional_int: False,
+          ),
+          fn(acc, service) {
+            router.merge_needed_helpers(
+              acc,
+              router.analyze_needed_helpers(service, messages),
+            )
+          },
+        )
+
+      // Generate helper functions once
+      let helpers =
+        router.generate_query_param_helpers_conditional(all_needed_helpers)
+
+      #(routers, helpers)
+    }
+  }
+}
+
 /// Generate service stub definitions for gRPC/HTTP services
 fn generate_service_stubs(services: List(parser.Service)) -> String {
   case services {
@@ -791,16 +841,17 @@ fn generate_single_service_stub(service: parser.Service) -> String {
 /// Generate a ServiceError type for the service
 fn generate_service_error_type(service_name: String) -> String {
   let error_type_name = service_name <> "Error"
+  let prefix = service_name
   string.join(
     [
       "/// Error type for " <> service_name <> " service",
       "pub type " <> error_type_name <> " {",
-      "  NotFound",
-      "  Unauthorized",
-      "  BadRequest(String)",
-      "  InvalidRequest(String)",
-      "  InternalError(String)",
-      "  Unavailable(String)",
+      "  " <> prefix <> "NotFound",
+      "  " <> prefix <> "Unauthorized",
+      "  " <> prefix <> "BadRequest(String)",
+      "  " <> prefix <> "InvalidRequest(String)",
+      "  " <> prefix <> "InternalError(String)",
+      "  " <> prefix <> "Unavailable(String)",
       "}",
     ],
     "\n",

@@ -1,3 +1,4 @@
+import gleam/bit_array
 import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http
@@ -7,16 +8,12 @@ import gleam/int
 import gleam/io
 import gleam/string
 import mist
-import temperature_server/proto/proto.{
-  type CreateTemperatureRequest, type DeleteTemperatureRequest,
-  type GetTemperatureRequest, type ListTemperaturesRequest,
-  type SearchTemperaturesRequest, type ServiceError, type TemperatureResponse,
-  type TemperatureServiceError, type UpdateTemperatureRequest,
-  TemperatureResponse,
-}
+import temperature_server/proto/proto
+import wisp
+import wisp/wisp_mist
 
 pub fn main() -> Nil {
-  io.println("🌡️  Starting Temperature Service...")
+  io.println("🌡️  Starting Temperature Service with Wisp...")
   io.println("📍 Server running on http://localhost:8000")
   io.println("")
   io.println("Available endpoints:")
@@ -28,116 +25,134 @@ pub fn main() -> Nil {
   io.println("  PATCH  /v1/temperatures/search")
   io.println("")
 
-  let assert Ok(_) =
-    mist.new(service)
-    |> mist.port(8000)
-    |> mist.start
+  wisp.configure_logger()
 
-  // Keep the server running
+  // Wisp secret key for sessions (not used here, but required)
+  let secret_key_base = wisp.random_string(64)
+
+  let assert Ok(_) =
+    wisp_mist.handler(handle_request, secret_key_base)
+    |> mist.new()
+    |> mist.port(8000)
+    |> mist.start()
+
   process.sleep_forever()
 }
 
+// Main Wisp request handler
+// This demonstrates the middleware pattern with Wisp
+fn handle_request(req: wisp.Request) -> wisp.Response {
+  use <- wisp.log_request(req)
+  // Wisp automatically handles body reading
+  // Convert Wisp request to gleam/http request with BitArray body
+  use body_bitarray <- wisp.require_bit_array_body(req)
+  let http_req = request.map(req, fn(_) { body_bitarray })
+  use <- handle_service_result
+
+  case wisp.path_segments(req), req.method {
+    // GET /v1/sensors/{sensor_id}/temperatures
+    ["v1", "sensors", _sensor_id, "temperatures"], http.Get ->
+      proto.http_get_temperature(http_req, handle_get_temperature)
+    // PUT /v1/sensors/{sensor_id}/temperatures
+    ["v1", "sensors", _sensor_id, "temperatures"], http.Put ->
+      proto.http_update_temperature(http_req, handle_update_temperature)
+    // DELETE /v1/locations/{location}/sensors/{sensor_id}
+    ["v1", "locations", _location, "sensors", _sensor_id], http.Delete ->
+      proto.http_delete_temperature(http_req, handle_delete_temperature)
+    // POST /v1/temperatures (create)
+    ["v1", "temperatures"], http.Post ->
+      proto.http_create_temperature(http_req, handle_create_temperature)
+    // GET /v1/temperatures (list)
+    ["v1", "temperatures"], http.Get ->
+      proto.http_list_temperatures(http_req, handle_list_temperatures)
+    // PATCH /v1/temperatures/search
+    ["v1", "temperatures", "search"], http.Patch ->
+      proto.http_search_temperatures(http_req, handle_search_temperatures)
+    _, _ ->
+      response.new(404)
+      |> response.set_body(bit_array.from_string("Not Found"))
+      |> Ok
+  }
+}
+
 // Middleware pattern: Handle service results with logging/telemetry
-// This demonstrates how HTTP adapters return Result for flexible error handling
+// Converts Result(Response(BitArray), TemperatureServiceRequestError) to wisp.Response
 fn handle_service_result(
-  result: Result(response.Response(BitArray), ServiceError),
-) -> response.Response(mist.ResponseData) {
-  case result {
-    Ok(http_response) ->
-      // Success - convert to Mist format
-      response.Response(
-        status: http_response.status,
-        headers: http_response.headers,
-        body: mist.Bytes(bytes_tree.from_bit_array(http_response.body)),
+  result: fn() ->
+    Result(response.Response(BitArray), proto.TemperatureServiceRequestError),
+) -> wisp.Response {
+  case result() {
+    Ok(http_response) -> {
+      // Success - convert to Wisp response
+      wisp.response(http_response.status)
+      |> wisp.set_header("content-type", "application/x-protobuf")
+      |> wisp.set_body(
+        wisp.Bytes(bytes_tree.from_bit_array(http_response.body)),
       )
+    }
     Error(service_error) -> {
       // Error - log it (or emit metrics, track telemetry, etc.)
       case service_error {
-        proto.DecodeError(msg) -> {
-          io.println("[ERROR] Failed to decode request: " <> msg)
+        proto.TemperatureServiceDecodeError(msg) -> {
+          wisp.log_error("Failed to decode request: " <> msg)
         }
-        proto.HandlerError(handler_error) -> {
-          io.println("[ERROR] Handler error: " <> string.inspect(handler_error))
+        proto.TemperatureServiceHandlerError(handler_error) -> {
+          wisp.log_error("Handler error: " <> string.inspect(handler_error))
         }
       }
       // Convert error to HTTP response
-      let error_response = service_error_to_response(service_error)
-      response.Response(
-        status: error_response.status,
-        headers: error_response.headers,
-        body: mist.Bytes(bytes_tree.from_bit_array(error_response.body)),
-      )
+      service_error_to_wisp_response(service_error)
     }
   }
 }
 
-// Convert ServiceError to HTTP response
-fn service_error_to_response(error: ServiceError) -> response.Response(BitArray) {
+// Convert TemperatureServiceRequestError to Wisp response
+fn service_error_to_wisp_response(
+  error: proto.TemperatureServiceRequestError,
+) -> wisp.Response {
   case error {
-    proto.DecodeError(msg) ->
-      response.Response(
-        status: 400,
-        headers: [#("content-type", "text/plain")],
-        body: <<"Bad Request: ", msg:utf8>>,
-      )
-    proto.HandlerError(handler_error) ->
-      handler_error_to_response(handler_error)
+    proto.TemperatureServiceDecodeError(msg) ->
+      wisp.response(400)
+      |> wisp.string_body("Bad Request: " <> msg)
+    proto.TemperatureServiceHandlerError(handler_error) ->
+      handler_error_to_wisp_response(handler_error)
   }
 }
 
-// Convert handler-specific errors to HTTP responses
-fn handler_error_to_response(
-  error: TemperatureServiceError,
-) -> response.Response(BitArray) {
+// Convert handler-specific errors to Wisp responses
+fn handler_error_to_wisp_response(
+  error: proto.TemperatureServiceError,
+) -> wisp.Response {
   case error {
-    proto.NotFound ->
-      response.Response(
-        status: 404,
-        headers: [#("content-type", "text/plain")],
-        body: <<"Not Found":utf8>>,
-      )
-    proto.Unauthorized ->
-      response.Response(
-        status: 401,
-        headers: [
-          #("content-type", "text/plain"),
-          #("www-authenticate", "Bearer"),
-        ],
-        body: <<"Unauthorized":utf8>>,
-      )
-    proto.BadRequest(msg) ->
-      response.Response(
-        status: 400,
-        headers: [#("content-type", "text/plain")],
-        body: <<"Bad Request: ", msg:utf8>>,
-      )
-    proto.InvalidRequest(msg) ->
-      response.Response(
-        status: 400,
-        headers: [#("content-type", "text/plain")],
-        body: <<"Invalid Request: ", msg:utf8>>,
-      )
-    proto.InternalError(msg) ->
-      response.Response(
-        status: 500,
-        headers: [#("content-type", "text/plain")],
-        body: <<"Internal Error: ", msg:utf8>>,
-      )
-    proto.Unavailable(msg) ->
-      response.Response(
-        status: 503,
-        headers: [#("content-type", "text/plain"), #("retry-after", "60")],
-        body: <<"Service Unavailable: ", msg:utf8>>,
-      )
+    proto.TemperatureServiceNotFound ->
+      wisp.response(404)
+      |> wisp.string_body("Not Found")
+    proto.TemperatureServiceUnauthorized ->
+      wisp.response(401)
+      |> wisp.set_header("www-authenticate", "Bearer")
+      |> wisp.string_body("Unauthorized")
+    proto.TemperatureServiceBadRequest(msg) ->
+      wisp.response(400)
+      |> wisp.string_body("Bad Request: " <> msg)
+    proto.TemperatureServiceInvalidRequest(msg) ->
+      wisp.response(400)
+      |> wisp.string_body("Invalid Request: " <> msg)
+    proto.TemperatureServiceInternalError(msg) ->
+      wisp.response(500)
+      |> wisp.string_body("Internal Error: " <> msg)
+    proto.TemperatureServiceUnavailable(msg) ->
+      wisp.response(503)
+      |> wisp.set_header("retry-after", "60")
+      |> wisp.string_body("Service Unavailable: " <> msg)
   }
 }
 
 // Business logic handlers
 
 fn handle_get_temperature(
-  req: GetTemperatureRequest,
-) -> Result(TemperatureResponse, TemperatureServiceError) {
-  Ok(TemperatureResponse(
+  req: proto.GetTemperatureRequest,
+) -> Result(proto.TemperatureResponse, proto.TemperatureServiceError) {
+  Ok(proto.TemperatureResponse(
     eval: "Sensor "
       <> req.sensor_id
       <> " at "
@@ -149,9 +164,9 @@ fn handle_get_temperature(
 }
 
 fn handle_create_temperature(
-  req: CreateTemperatureRequest,
-) -> Result(TemperatureResponse, TemperatureServiceError) {
-  Ok(TemperatureResponse(
+  req: proto.CreateTemperatureRequest,
+) -> Result(proto.TemperatureResponse, proto.TemperatureServiceError) {
+  Ok(proto.TemperatureResponse(
     eval: "Created temperature: "
       <> int.to_string(req.degrees)
       <> "°"
@@ -166,9 +181,9 @@ fn handle_create_temperature(
 }
 
 fn handle_update_temperature(
-  req: UpdateTemperatureRequest,
-) -> Result(TemperatureResponse, TemperatureServiceError) {
-  Ok(TemperatureResponse(
+  req: proto.UpdateTemperatureRequest,
+) -> Result(proto.TemperatureResponse, proto.TemperatureServiceError) {
+  Ok(proto.TemperatureResponse(
     eval: "Updated sensor "
       <> req.sensor_id
       <> " to "
@@ -183,9 +198,9 @@ fn handle_update_temperature(
 }
 
 fn handle_delete_temperature(
-  req: DeleteTemperatureRequest,
-) -> Result(TemperatureResponse, TemperatureServiceError) {
-  Ok(TemperatureResponse(
+  req: proto.DeleteTemperatureRequest,
+) -> Result(proto.TemperatureResponse, proto.TemperatureServiceError) {
+  Ok(proto.TemperatureResponse(
     eval: "Deleted sensor "
       <> req.sensor_id
       <> " from location "
@@ -196,9 +211,9 @@ fn handle_delete_temperature(
 }
 
 fn handle_list_temperatures(
-  req: ListTemperaturesRequest,
-) -> Result(TemperatureResponse, TemperatureServiceError) {
-  Ok(TemperatureResponse(
+  req: proto.ListTemperaturesRequest,
+) -> Result(proto.TemperatureResponse, proto.TemperatureServiceError) {
+  Ok(proto.TemperatureResponse(
     eval: "Listing temperatures for "
       <> req.location
       <> " (limit: "
@@ -212,9 +227,9 @@ fn handle_list_temperatures(
 }
 
 fn handle_search_temperatures(
-  req: SearchTemperaturesRequest,
-) -> Result(TemperatureResponse, TemperatureServiceError) {
-  Ok(TemperatureResponse(
+  req: proto.SearchTemperaturesRequest,
+) -> Result(proto.TemperatureResponse, proto.TemperatureServiceError) {
+  Ok(proto.TemperatureResponse(
     eval: "Searching temperatures between "
       <> int.to_string(req.min_degrees)
       <> "°C and "
@@ -224,77 +239,4 @@ fn handle_search_temperatures(
     degrees: req.min_degrees,
     sensor_id: "",
   ))
-}
-
-// HTTP service handler that routes requests to the generated HTTP handlers
-// This demonstrates the middleware pattern:
-// 1. Read body from Mist connection
-// 2. Call generated HTTP adapters (returns Result for middleware)
-// 3. Handle Result with custom middleware (logging, metrics, error conversion)
-fn service(
-  req: request.Request(mist.Connection),
-) -> response.Response(mist.ResponseData) {
-  // Read the body from the connection (with 10MB limit)
-  let bit_req = case mist.read_body(req, 10_000_000) {
-    Ok(req_with_body) -> req_with_body
-    Error(_) -> request.set_body(req, <<>>)
-  }
-
-  case request.path_segments(req) {
-    // GET /v1/sensors/{sensor_id}/temperatures
-    // PUT /v1/sensors/{sensor_id}/temperatures
-    ["v1", "sensors", _sensor_id, "temperatures"] -> {
-      case req.method {
-        http.Get ->
-          proto.http_get_temperature(bit_req, handle_get_temperature)
-          |> handle_service_result
-        http.Put ->
-          proto.http_update_temperature(bit_req, handle_update_temperature)
-          |> handle_service_result
-        _ ->
-          response.new(404)
-          |> response.set_body(mist.Bytes(bytes_tree.from_string("Not Found")))
-      }
-    }
-    // DELETE /v1/locations/{location}/sensors/{sensor_id}
-    ["v1", "locations", _location, "sensors", _sensor_id] -> {
-      case req.method {
-        http.Delete ->
-          proto.http_delete_temperature(bit_req, handle_delete_temperature)
-          |> handle_service_result
-        _ ->
-          response.new(404)
-          |> response.set_body(mist.Bytes(bytes_tree.from_string("Not Found")))
-      }
-    }
-    // GET /v1/temperatures (list)
-    // POST /v1/temperatures (create)
-    ["v1", "temperatures"] -> {
-      case req.method {
-        http.Post ->
-          proto.http_create_temperature(bit_req, handle_create_temperature)
-          |> handle_service_result
-        http.Get ->
-          proto.http_list_temperatures(bit_req, handle_list_temperatures)
-          |> handle_service_result
-        _ ->
-          response.new(404)
-          |> response.set_body(mist.Bytes(bytes_tree.from_string("Not Found")))
-      }
-    }
-    // PATCH /v1/temperatures/search
-    ["v1", "temperatures", "search"] -> {
-      case req.method {
-        http.Patch ->
-          proto.http_search_temperatures(bit_req, handle_search_temperatures)
-          |> handle_service_result
-        _ ->
-          response.new(404)
-          |> response.set_body(mist.Bytes(bytes_tree.from_string("Not Found")))
-      }
-    }
-    _ ->
-      response.new(404)
-      |> response.set_body(mist.Bytes(bytes_tree.from_string("Not Found")))
-  }
 }

@@ -98,3 +98,32 @@ service TemperatureService {
         };
     }
 }
+
+// Request for getting sensor information
+message GetSensorRequest {
+    string sensor_id = 1;
+}
+
+// Request for creating a new sensor
+message CreateSensorRequest {
+    string sensor_id = 1;
+    string location = 2;
+    string type = 3;  // "indoor", "outdoor", etc.
+}
+
+// Response for sensor operations
+message SensorResponse {
+    string sensor_id = 1;
+    string location = 2;
+    string type = 3;
+    string status = 4;
+}
+
+service SensorService {
+    // Get sensor information
+    rpc GetSensor(GetSensorRequest) returns (SensorResponse)
+    
+    // Create a new sensor
+    rpc CreateSensor(CreateSensorRequest) returns (SensorResponse)
+    
+}

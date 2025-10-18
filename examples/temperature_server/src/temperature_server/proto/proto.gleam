@@ -59,6 +59,50 @@ pub type TemperatureResponse {
   TemperatureResponse(eval: String, degrees: Int, sensor_id: String)
 }
 
+pub type GetSensorRequest {
+  GetSensorRequest(sensor_id: String)
+}
+
+pub type CreateSensorRequest {
+  CreateSensorRequest(sensor_id: String, location: String, type_: String)
+}
+
+pub type SensorResponse {
+  SensorResponse(
+    sensor_id: String,
+    location: String,
+    type_: String,
+    status: String,
+  )
+}
+
+pub fn encode_sensor_response(sensor_response: SensorResponse) -> BitArray {
+  encode.message([
+    encode.string_field(1, sensor_response.sensor_id),
+    encode.string_field(2, sensor_response.location),
+    encode.string_field(3, sensor_response.type_),
+    encode.string_field(4, sensor_response.status),
+  ])
+}
+
+pub fn encode_create_sensor_request(
+  create_sensor_request: CreateSensorRequest,
+) -> BitArray {
+  encode.message([
+    encode.string_field(1, create_sensor_request.sensor_id),
+    encode.string_field(2, create_sensor_request.location),
+    encode.string_field(3, create_sensor_request.type_),
+  ])
+}
+
+pub fn encode_get_sensor_request(
+  get_sensor_request: GetSensorRequest,
+) -> BitArray {
+  encode.message([
+    encode.string_field(1, get_sensor_request.sensor_id),
+  ])
+}
+
 pub fn encode_temperature_response(
   temperature_response: TemperatureResponse,
 ) -> BitArray {
@@ -128,6 +172,53 @@ pub fn encode_get_temperature_request(
     encode.string_field(2, get_temperature_request.location),
     encode.bool_field(3, get_temperature_request.include_history),
   ])
+}
+
+pub fn sensor_response_decoder() -> decode.Decoder(SensorResponse) {
+  use sensor_id <- decode.then(decode.string_with_default(1, ""))
+  use location <- decode.then(decode.string_with_default(2, ""))
+  use type_ <- decode.then(decode.string_with_default(3, ""))
+  use status <- decode.then(decode.string_with_default(4, ""))
+  decode.success(SensorResponse(
+    sensor_id: sensor_id,
+    location: location,
+    type_: type_,
+    status: status,
+  ))
+}
+
+pub fn decode_sensor_response(
+  data: BitArray,
+) -> Result(SensorResponse, List(decode.DecodeError)) {
+  decode.run(data, sensor_response_decoder())
+}
+
+pub fn create_sensor_request_decoder() -> decode.Decoder(CreateSensorRequest) {
+  use sensor_id <- decode.then(decode.string_with_default(1, ""))
+  use location <- decode.then(decode.string_with_default(2, ""))
+  use type_ <- decode.then(decode.string_with_default(3, ""))
+  decode.success(CreateSensorRequest(
+    sensor_id: sensor_id,
+    location: location,
+    type_: type_,
+  ))
+}
+
+pub fn decode_create_sensor_request(
+  data: BitArray,
+) -> Result(CreateSensorRequest, List(decode.DecodeError)) {
+  decode.run(data, create_sensor_request_decoder())
+}
+
+pub fn get_sensor_request_decoder() -> decode.Decoder(GetSensorRequest) {
+  use sensor_id <- decode.then(decode.string_with_default(1, ""))
+  decode.success(GetSensorRequest(sensor_id: sensor_id))
+}
+
+pub fn decode_get_sensor_request(
+  data: BitArray,
+) -> Result(GetSensorRequest, List(decode.DecodeError)) {
+  decode.run(data, get_sensor_request_decoder())
 }
 
 pub fn temperature_response_decoder() -> decode.Decoder(TemperatureResponse) {
@@ -267,12 +358,24 @@ pub fn decode_get_temperature_request(
 
 /// Error type for TemperatureService service
 pub type TemperatureServiceError {
-  NotFound
-  Unauthorized
-  BadRequest(String)
-  InvalidRequest(String)
-  InternalError(String)
-  Unavailable(String)
+  TemperatureServiceNotFound
+  TemperatureServiceUnauthorized
+  TemperatureServiceBadRequest(String)
+  TemperatureServiceInvalidRequest(String)
+  TemperatureServiceInternalError(String)
+  TemperatureServiceUnavailable(String)
+}
+
+// Service: SensorService
+
+/// Error type for SensorService service
+pub type SensorServiceError {
+  SensorServiceNotFound
+  SensorServiceUnauthorized
+  SensorServiceBadRequest(String)
+  SensorServiceInvalidRequest(String)
+  SensorServiceInternalError(String)
+  SensorServiceUnavailable(String)
 }
 
 /// Auto-generated service for TemperatureService
@@ -281,13 +384,13 @@ pub type TemperatureServiceError {
 /// Layer 2: HTTP adapters (gleam/http types, returns Result for middleware)
 /// 
 /// HTTP adapters return Result(Response, ServiceError) for middleware pattern
-/// Service-level errors that can occur during request processing
+/// Service-level errors for TemperatureService
 /// These can be logged for telemetry before converting to HTTP responses
-pub type ServiceError {
+pub type TemperatureServiceRequestError {
   /// Failed to decode the protobuf request
-  DecodeError(String)
+  TemperatureServiceDecodeError(String)
   /// Handler returned an error
-  HandlerError(TemperatureServiceError)
+  TemperatureServiceHandlerError(TemperatureServiceError)
 }
 
 /// Service function for GetTemperature
@@ -296,15 +399,18 @@ pub fn get_temperature_service(
   request_bytes: BitArray,
   handler: fn(GetTemperatureRequest) ->
     Result(TemperatureResponse, TemperatureServiceError),
-) -> Result(BitArray, ServiceError) {
+) -> Result(BitArray, TemperatureServiceRequestError) {
   case decode.run(request_bytes, with: get_temperature_request_decoder()) {
     Ok(proto_request) -> {
       case handler(proto_request) {
         Ok(response) -> Ok(encode_temperature_response(response))
-        Error(err) -> Error(HandlerError(err))
+        Error(err) -> Error(TemperatureServiceHandlerError(err))
       }
     }
-    Error(_) -> Error(DecodeError("Failed to decode GetTemperatureRequest"))
+    Error(_) ->
+      Error(TemperatureServiceDecodeError(
+        "Failed to decode GetTemperatureRequest",
+      ))
   }
 }
 
@@ -314,15 +420,18 @@ pub fn create_temperature_service(
   request_bytes: BitArray,
   handler: fn(CreateTemperatureRequest) ->
     Result(TemperatureResponse, TemperatureServiceError),
-) -> Result(BitArray, ServiceError) {
+) -> Result(BitArray, TemperatureServiceRequestError) {
   case decode.run(request_bytes, with: create_temperature_request_decoder()) {
     Ok(proto_request) -> {
       case handler(proto_request) {
         Ok(response) -> Ok(encode_temperature_response(response))
-        Error(err) -> Error(HandlerError(err))
+        Error(err) -> Error(TemperatureServiceHandlerError(err))
       }
     }
-    Error(_) -> Error(DecodeError("Failed to decode CreateTemperatureRequest"))
+    Error(_) ->
+      Error(TemperatureServiceDecodeError(
+        "Failed to decode CreateTemperatureRequest",
+      ))
   }
 }
 
@@ -332,15 +441,18 @@ pub fn update_temperature_service(
   request_bytes: BitArray,
   handler: fn(UpdateTemperatureRequest) ->
     Result(TemperatureResponse, TemperatureServiceError),
-) -> Result(BitArray, ServiceError) {
+) -> Result(BitArray, TemperatureServiceRequestError) {
   case decode.run(request_bytes, with: update_temperature_request_decoder()) {
     Ok(proto_request) -> {
       case handler(proto_request) {
         Ok(response) -> Ok(encode_temperature_response(response))
-        Error(err) -> Error(HandlerError(err))
+        Error(err) -> Error(TemperatureServiceHandlerError(err))
       }
     }
-    Error(_) -> Error(DecodeError("Failed to decode UpdateTemperatureRequest"))
+    Error(_) ->
+      Error(TemperatureServiceDecodeError(
+        "Failed to decode UpdateTemperatureRequest",
+      ))
   }
 }
 
@@ -350,15 +462,18 @@ pub fn delete_temperature_service(
   request_bytes: BitArray,
   handler: fn(DeleteTemperatureRequest) ->
     Result(TemperatureResponse, TemperatureServiceError),
-) -> Result(BitArray, ServiceError) {
+) -> Result(BitArray, TemperatureServiceRequestError) {
   case decode.run(request_bytes, with: delete_temperature_request_decoder()) {
     Ok(proto_request) -> {
       case handler(proto_request) {
         Ok(response) -> Ok(encode_temperature_response(response))
-        Error(err) -> Error(HandlerError(err))
+        Error(err) -> Error(TemperatureServiceHandlerError(err))
       }
     }
-    Error(_) -> Error(DecodeError("Failed to decode DeleteTemperatureRequest"))
+    Error(_) ->
+      Error(TemperatureServiceDecodeError(
+        "Failed to decode DeleteTemperatureRequest",
+      ))
   }
 }
 
@@ -368,15 +483,18 @@ pub fn list_temperatures_service(
   request_bytes: BitArray,
   handler: fn(ListTemperaturesRequest) ->
     Result(TemperatureResponse, TemperatureServiceError),
-) -> Result(BitArray, ServiceError) {
+) -> Result(BitArray, TemperatureServiceRequestError) {
   case decode.run(request_bytes, with: list_temperatures_request_decoder()) {
     Ok(proto_request) -> {
       case handler(proto_request) {
         Ok(response) -> Ok(encode_temperature_response(response))
-        Error(err) -> Error(HandlerError(err))
+        Error(err) -> Error(TemperatureServiceHandlerError(err))
       }
     }
-    Error(_) -> Error(DecodeError("Failed to decode ListTemperaturesRequest"))
+    Error(_) ->
+      Error(TemperatureServiceDecodeError(
+        "Failed to decode ListTemperaturesRequest",
+      ))
   }
 }
 
@@ -386,15 +504,18 @@ pub fn search_temperatures_service(
   request_bytes: BitArray,
   handler: fn(SearchTemperaturesRequest) ->
     Result(TemperatureResponse, TemperatureServiceError),
-) -> Result(BitArray, ServiceError) {
+) -> Result(BitArray, TemperatureServiceRequestError) {
   case decode.run(request_bytes, with: search_temperatures_request_decoder()) {
     Ok(proto_request) -> {
       case handler(proto_request) {
         Ok(response) -> Ok(encode_temperature_response(response))
-        Error(err) -> Error(HandlerError(err))
+        Error(err) -> Error(TemperatureServiceHandlerError(err))
       }
     }
-    Error(_) -> Error(DecodeError("Failed to decode SearchTemperaturesRequest"))
+    Error(_) ->
+      Error(TemperatureServiceDecodeError(
+        "Failed to decode SearchTemperaturesRequest",
+      ))
   }
 }
 
@@ -406,7 +527,7 @@ pub fn http_get_temperature(
   req: request.Request(BitArray),
   handler: fn(GetTemperatureRequest) ->
     Result(TemperatureResponse, TemperatureServiceError),
-) -> Result(response.Response(BitArray), ServiceError) {
+) -> Result(response.Response(BitArray), TemperatureServiceRequestError) {
   // Extract request from query/path parameters
   case format_query_request_for_get_temperature(req) {
     Ok(proto_request) -> {
@@ -422,7 +543,8 @@ pub fn http_get_temperature(
         Error(service_error) -> Error(service_error)
       }
     }
-    Error(_) -> Error(DecodeError("Failed to parse query parameters"))
+    Error(_) ->
+      Error(TemperatureServiceDecodeError("Failed to parse query parameters"))
   }
 }
 
@@ -434,7 +556,7 @@ pub fn http_create_temperature(
   req: request.Request(BitArray),
   handler: fn(CreateTemperatureRequest) ->
     Result(TemperatureResponse, TemperatureServiceError),
-) -> Result(response.Response(BitArray), ServiceError) {
+) -> Result(response.Response(BitArray), TemperatureServiceRequestError) {
   let request_bytes = req.body
   case create_temperature_service(request_bytes, handler) {
     Ok(response_bytes) ->
@@ -455,7 +577,7 @@ pub fn http_update_temperature(
   req: request.Request(BitArray),
   handler: fn(UpdateTemperatureRequest) ->
     Result(TemperatureResponse, TemperatureServiceError),
-) -> Result(response.Response(BitArray), ServiceError) {
+) -> Result(response.Response(BitArray), TemperatureServiceRequestError) {
   let request_bytes = req.body
   case update_temperature_service(request_bytes, handler) {
     Ok(response_bytes) ->
@@ -476,7 +598,7 @@ pub fn http_delete_temperature(
   req: request.Request(BitArray),
   handler: fn(DeleteTemperatureRequest) ->
     Result(TemperatureResponse, TemperatureServiceError),
-) -> Result(response.Response(BitArray), ServiceError) {
+) -> Result(response.Response(BitArray), TemperatureServiceRequestError) {
   // Extract request from query/path parameters
   case format_query_request_for_delete_temperature(req) {
     Ok(proto_request) -> {
@@ -492,7 +614,8 @@ pub fn http_delete_temperature(
         Error(service_error) -> Error(service_error)
       }
     }
-    Error(_) -> Error(DecodeError("Failed to parse query parameters"))
+    Error(_) ->
+      Error(TemperatureServiceDecodeError("Failed to parse query parameters"))
   }
 }
 
@@ -504,7 +627,7 @@ pub fn http_list_temperatures(
   req: request.Request(BitArray),
   handler: fn(ListTemperaturesRequest) ->
     Result(TemperatureResponse, TemperatureServiceError),
-) -> Result(response.Response(BitArray), ServiceError) {
+) -> Result(response.Response(BitArray), TemperatureServiceRequestError) {
   // Extract request from query/path parameters
   case format_query_request_for_list_temperatures(req) {
     Ok(proto_request) -> {
@@ -520,7 +643,8 @@ pub fn http_list_temperatures(
         Error(service_error) -> Error(service_error)
       }
     }
-    Error(_) -> Error(DecodeError("Failed to parse query parameters"))
+    Error(_) ->
+      Error(TemperatureServiceDecodeError("Failed to parse query parameters"))
   }
 }
 
@@ -532,7 +656,7 @@ pub fn http_search_temperatures(
   req: request.Request(BitArray),
   handler: fn(SearchTemperaturesRequest) ->
     Result(TemperatureResponse, TemperatureServiceError),
-) -> Result(response.Response(BitArray), ServiceError) {
+) -> Result(response.Response(BitArray), TemperatureServiceRequestError) {
   let request_bytes = req.body
   case search_temperatures_service(request_bytes, handler) {
     Ok(response_bytes) ->
@@ -627,6 +751,129 @@ fn format_query_request_for_list_temperatures(
     Error(_) -> {
       // No query params, create message with defaults
       case decode.run(<<>>, with: list_temperatures_request_decoder()) {
+        Ok(msg) -> Ok(msg)
+        Error(_) -> Error(Nil)
+      }
+    }
+  }
+}
+
+/// Auto-generated service for SensorService
+/// 
+/// Layer 1: Core service functions (transport-agnostic BitArray -> Result)
+/// Layer 2: HTTP adapters (gleam/http types, returns Result for middleware)
+/// 
+/// HTTP adapters return Result(Response, ServiceError) for middleware pattern
+/// Service-level errors for SensorService
+/// These can be logged for telemetry before converting to HTTP responses
+pub type SensorServiceRequestError {
+  /// Failed to decode the protobuf request
+  SensorServiceDecodeError(String)
+  /// Handler returned an error
+  SensorServiceHandlerError(SensorServiceError)
+}
+
+/// Service function for GetSensor
+/// Handles protobuf encoding/decoding, returns encoded response or error
+pub fn get_sensor_service(
+  request_bytes: BitArray,
+  handler: fn(GetSensorRequest) -> Result(SensorResponse, SensorServiceError),
+) -> Result(BitArray, SensorServiceRequestError) {
+  case decode.run(request_bytes, with: get_sensor_request_decoder()) {
+    Ok(proto_request) -> {
+      case handler(proto_request) {
+        Ok(response) -> Ok(encode_sensor_response(response))
+        Error(err) -> Error(SensorServiceHandlerError(err))
+      }
+    }
+    Error(_) ->
+      Error(SensorServiceDecodeError("Failed to decode GetSensorRequest"))
+  }
+}
+
+/// Service function for CreateSensor
+/// Handles protobuf encoding/decoding, returns encoded response or error
+pub fn create_sensor_service(
+  request_bytes: BitArray,
+  handler: fn(CreateSensorRequest) -> Result(SensorResponse, SensorServiceError),
+) -> Result(BitArray, SensorServiceRequestError) {
+  case decode.run(request_bytes, with: create_sensor_request_decoder()) {
+    Ok(proto_request) -> {
+      case handler(proto_request) {
+        Ok(response) -> Ok(encode_sensor_response(response))
+        Error(err) -> Error(SensorServiceHandlerError(err))
+      }
+    }
+    Error(_) ->
+      Error(SensorServiceDecodeError("Failed to decode CreateSensorRequest"))
+  }
+}
+
+/// HTTP adapter for GetSensor
+/// GET /api/v1/sensors/{id}
+/// Uses gleam/http types (server-agnostic)
+/// Returns Result for middleware pattern
+pub fn http_get_sensor(
+  req: request.Request(BitArray),
+  handler: fn(GetSensorRequest) -> Result(SensorResponse, SensorServiceError),
+) -> Result(response.Response(BitArray), SensorServiceRequestError) {
+  // Extract request from query/path parameters
+  case format_query_request_for_get_sensor(req) {
+    Ok(proto_request) -> {
+      // Encode the request to bytes for the service function
+      let request_bytes = encode_get_sensor_request(proto_request)
+      case get_sensor_service(request_bytes, handler) {
+        Ok(response_bytes) ->
+          Ok(response.Response(
+            status: 200,
+            headers: [#("content-type", "application/x-protobuf")],
+            body: response_bytes,
+          ))
+        Error(service_error) -> Error(service_error)
+      }
+    }
+    Error(_) ->
+      Error(SensorServiceDecodeError("Failed to parse query parameters"))
+  }
+}
+
+/// HTTP adapter for CreateSensor
+/// POST /api/v1/sensors
+/// Uses gleam/http types (server-agnostic)
+/// Returns Result for middleware pattern
+pub fn http_create_sensor(
+  req: request.Request(BitArray),
+  handler: fn(CreateSensorRequest) -> Result(SensorResponse, SensorServiceError),
+) -> Result(response.Response(BitArray), SensorServiceRequestError) {
+  let request_bytes = req.body
+  case create_sensor_service(request_bytes, handler) {
+    Ok(response_bytes) ->
+      Ok(response.Response(
+        status: 200,
+        headers: [#("content-type", "application/x-protobuf")],
+        body: response_bytes,
+      ))
+    Error(service_error) -> Error(service_error)
+  }
+}
+
+/// Map query parameters to GetSensorRequest
+fn format_query_request_for_get_sensor(
+  req: request.Request(BitArray),
+) -> Result(GetSensorRequest, Nil) {
+  // Extract path parameters from request path
+  let path_params =
+    extract_path_params_from_request(req.path, "/api/v1/sensors/{id}")
+  case request.get_query(req) {
+    Ok(params) -> {
+      // Extract and convert each field from parsed query params
+      let sensor_id = get_query_param_string(params, "sensor_id", "")
+
+      Ok(GetSensorRequest(sensor_id: sensor_id))
+    }
+    Error(_) -> {
+      // No query params, create message with defaults
+      case decode.run(<<>>, with: get_sensor_request_decoder()) {
         Ok(msg) -> Ok(msg)
         Error(_) -> Error(Nil)
       }
