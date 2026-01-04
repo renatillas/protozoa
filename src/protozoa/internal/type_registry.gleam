@@ -1,17 +1,18 @@
 import gleam/dict
 import gleam/list
-import gleam/option.{type Option, None, Some}
+import gleam/option
 import gleam/result
 import gleam/string
-import protozoa/internal/well_known_types
-import protozoa/parser.{type Enum, type Message, type ProtoFile, type ProtoType}
+import protozoa/internal/well_known_type
+import protozoa/parser/file
+import protozoa/parser/proto
 
 /// A registry to hold all message and enum types across multiple proto files,
 /// allowing for type resolution and lookup.
 pub type TypeRegistry {
   TypeRegistry(
-    messages: dict.Dict(String, Message),
-    enums: dict.Dict(String, Enum),
+    messages: dict.Dict(String, proto.Message),
+    enums: dict.Dict(String, proto.Enum),
     type_sources: dict.Dict(String, String),
     file_packages: dict.Dict(String, String),
   )
@@ -48,7 +49,7 @@ pub fn new() -> TypeRegistry {
 
 /// Load well-known types into the registry
 fn load_well_known_types(registry: TypeRegistry) -> TypeRegistry {
-  let well_known_files = well_known_types.get_well_known_proto_files()
+  let well_known_files = well_known_type.get_well_known_proto_files()
 
   dict.fold(well_known_files, registry, fn(acc, file_path, proto_file) {
     case add_file(acc, file_path, proto_file) {
@@ -63,7 +64,7 @@ fn load_well_known_types(registry: TypeRegistry) -> TypeRegistry {
 pub fn add_file(
   registry: TypeRegistry,
   file_path: String,
-  proto_file: ProtoFile,
+  proto_file: file.ProtoFile,
 ) -> Result(TypeRegistry, Error) {
   let package = option.unwrap(proto_file.package, "")
 
@@ -92,7 +93,7 @@ pub fn add_file(
 
 fn add_message(
   registry: TypeRegistry,
-  message: Message,
+  message: proto.Message,
   package: String,
   file_path: String,
 ) -> Result(TypeRegistry, Error) {
@@ -136,7 +137,7 @@ fn add_message(
 
 fn add_nested_messages(
   registry: TypeRegistry,
-  nested_messages: List(Message),
+  nested_messages: List(proto.Message),
   parent_fqn: String,
   file_path: String,
 ) -> Result(TypeRegistry, Error) {
@@ -174,7 +175,7 @@ fn add_nested_messages(
 
 fn add_enum(
   registry: TypeRegistry,
-  enum: Enum,
+  enum: proto.Enum,
   package: String,
   file_path: String,
 ) -> Result(TypeRegistry, Error) {
@@ -227,26 +228,33 @@ pub fn resolve_type_reference(
     // 2. In current package
     make_fully_qualified_name(current_package, type_name),
     // 3. Nested type in current package (e.g., Message.NestedMessage)
-    ..resolve_nested_type_candidates(type_name, current_package, registry)
+    ..resolve_nested_type_candidates(type_name, current_package, registry),
   ]
 
   case
     list.find(candidates, fn(candidate) {
       case lookup_type(registry, candidate) {
-        Some(_) -> True
-        None -> False
+        option.Some(_) -> True
+        option.None -> False
       }
     })
   {
     Ok(resolved) -> Ok(resolved)
-    Error(_) ->
-      Error(
-        "Unknown type: "
-        <> type_name
-        <> " (searched in package: "
-        <> current_package
-        <> ")",
-      )
+    Error(_) -> {
+      // 4. Try searching for nested types in the registry
+      // This handles cases like "Inner" when the full name is "package.Outer.Inner"
+      case find_nested_type_in_registry(registry, type_name, current_package) {
+        option.Some(fqn) -> Ok(fqn)
+        option.None ->
+          Error(
+            "Unknown type: "
+            <> type_name
+            <> " (searched in package: "
+            <> current_package
+            <> ")",
+          )
+      }
+    }
   }
 }
 
@@ -265,26 +273,60 @@ fn resolve_nested_type_candidates(
   }
 }
 
+/// Search the registry for a nested type by its simple name
+/// This handles cases where we have type name "Inner" but the registry has "package.Outer.Inner"
+fn find_nested_type_in_registry(
+  registry: TypeRegistry,
+  type_name: String,
+  current_package: String,
+) -> option.Option(String) {
+  // Search for a FQN that ends with ".{type_name}" in the current package
+  let suffix = "." <> type_name
+  let package_prefix = case current_package {
+    "" -> ""
+    pkg -> pkg <> "."
+  }
+
+  // Search messages first
+  let message_match =
+    dict.keys(registry.messages)
+    |> list.find(fn(fqn) {
+      string.ends_with(fqn, suffix) && string.starts_with(fqn, package_prefix)
+    })
+
+  case message_match {
+    Ok(fqn) -> option.Some(fqn)
+    Error(_) -> {
+      // Search enums
+      dict.keys(registry.enums)
+      |> list.find(fn(fqn) {
+        string.ends_with(fqn, suffix) && string.starts_with(fqn, package_prefix)
+      })
+      |> option.from_result()
+    }
+  }
+}
+
 pub fn lookup_type(
   registry: TypeRegistry,
   fqn: String,
-) -> Option(#(String, ProtoType)) {
+) -> option.Option(#(String, proto.Type)) {
   case dict.get(registry.messages, fqn) {
     Ok(msg) -> {
       case dict.get(registry.type_sources, fqn) {
-        Ok(source) -> Some(#(source, parser.MessageType(msg.name)))
-        Error(_) -> None
+        Ok(source) -> option.Some(#(source, proto.MessageType(msg.name)))
+        Error(_) -> option.None
       }
     }
     Error(_) -> {
       case dict.get(registry.enums, fqn) {
         Ok(enum) -> {
           case dict.get(registry.type_sources, fqn) {
-            Ok(source) -> Some(#(source, parser.EnumType(enum.name)))
-            Error(_) -> None
+            Ok(source) -> option.Some(#(source, proto.EnumType(enum.name)))
+            Error(_) -> option.None
           }
         }
-        Error(_) -> None
+        Error(_) -> option.None
       }
     }
   }
@@ -293,14 +335,14 @@ pub fn lookup_type(
 pub fn get_types_from_file(
   registry: TypeRegistry,
   file_path: String,
-) -> List(#(String, ProtoType)) {
+) -> List(#(String, proto.Type)) {
   dict.fold(registry.type_sources, [], fn(acc, fqn, source) {
     case source == file_path {
       False -> acc
       True -> {
         case lookup_type(registry, fqn) {
-          Some(#(_source, proto_type)) -> [#(fqn, proto_type), ..acc]
-          None -> acc
+          option.Some(#(_source, proto_type)) -> [#(fqn, proto_type), ..acc]
+          option.None -> acc
         }
       }
     }
@@ -310,16 +352,79 @@ pub fn get_types_from_file(
 pub fn get_file_package(
   registry: TypeRegistry,
   file_path: String,
-) -> Option(String) {
+) -> option.Option(String) {
   case dict.get(registry.file_packages, file_path) {
-    Ok(package) -> Some(package)
-    Error(_) -> None
+    Ok(package) -> option.Some(package)
+    Error(_) -> option.None
   }
 }
 
-pub fn get_type_source(registry: TypeRegistry, fqn: String) -> Option(String) {
+pub fn get_type_source(
+  registry: TypeRegistry,
+  fqn: String,
+) -> option.Option(String) {
   case dict.get(registry.type_sources, fqn) {
-    Ok(source) -> Some(source)
-    Error(_) -> None
+    Ok(source) -> option.Some(source)
+    Error(_) -> option.None
+  }
+}
+
+/// Get all message FQNs in the registry (for debugging)
+pub fn get_all_messages(registry: TypeRegistry) -> List(String) {
+  dict.keys(registry.messages)
+}
+
+/// Check if a type name refers to an enum (resolves the type first)
+pub fn is_enum_type(
+  registry: TypeRegistry,
+  type_name: String,
+  current_package: String,
+) -> Bool {
+  case resolve_type_reference(registry, type_name, current_package) {
+    Ok(fqn) -> {
+      case dict.get(registry.enums, fqn) {
+        Ok(_) -> True
+        Error(_) -> False
+      }
+    }
+    Error(_) -> False
+  }
+}
+
+/// Resolve a field type: if it's a MessageType that's actually an enum, convert it to EnumType
+/// Also resolves the type name to its fully qualified name
+pub fn resolve_field_type(
+  registry: TypeRegistry,
+  field_type: proto.Type,
+  current_package: String,
+) -> proto.Type {
+  case field_type {
+    proto.MessageType(name) -> {
+      case resolve_type_reference(registry, name, current_package) {
+        Ok(fqn) -> {
+          case dict.get(registry.enums, fqn) {
+            Ok(_) -> proto.EnumType(fqn)
+            Error(_) -> proto.MessageType(fqn)
+          }
+        }
+        Error(_) -> field_type
+      }
+    }
+    proto.EnumType(name) -> {
+      case resolve_type_reference(registry, name, current_package) {
+        Ok(fqn) -> proto.EnumType(fqn)
+        Error(_) -> field_type
+      }
+    }
+    proto.Repeated(inner) ->
+      proto.Repeated(resolve_field_type(registry, inner, current_package))
+    proto.Optional(inner) ->
+      proto.Optional(resolve_field_type(registry, inner, current_package))
+    proto.Map(key, value) ->
+      proto.Map(
+        resolve_field_type(registry, key, current_package),
+        resolve_field_type(registry, value, current_package),
+      )
+    _ -> field_type
   }
 }

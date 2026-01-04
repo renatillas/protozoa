@@ -1,0 +1,9 @@
+
+*.beam
+*.ez
+/build
+erl_crash.dump
+
+test/generated_outputs/
+.claude/
+example/build

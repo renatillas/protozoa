@@ -1,32 +1,21 @@
+import birdie
 import gleam/dict
 import gleam/list
-import gleam/option.{Some}
+import gleam/option
 import gleam/string
-import gleeunit
 import protozoa/internal/codegen
 import protozoa/internal/import_resolver
 import protozoa/internal/type_registry
-import protozoa/internal/well_known_types
-import protozoa/parser
-import simplifile
+import protozoa/internal/well_known_type
+import protozoa/parser/file
+import protozoa/parser/proto
 
-pub fn main() {
-  gleeunit.main()
-}
-
-fn create_delete_file(
-  name: String,
-  proto: String,
-  fun: fn() -> b,
-) -> Result(Nil, simplifile.FileError) {
-  let _ = simplifile.write(name, proto)
-  fun()
-  let _ = simplifile.delete(name)
-}
+// ============================================================================
+// Basic resolver tests
+// ============================================================================
 
 pub fn new_resolver_test() {
-  let assert import_resolver.ImportResolver(
-    search_paths: ["."],
+  let import_resolver.ImportResolver(
     loaded_files:,
     dependency_graph:,
     public_imports:,
@@ -38,15 +27,6 @@ pub fn new_resolver_test() {
   assert 0 == dict.size(public_imports)
 }
 
-pub fn with_search_paths_test() {
-  let assert import_resolver.ImportResolver(
-    search_paths: ["/proto", "/usr/local/include"],
-    ..,
-  ) =
-    import_resolver.new()
-    |> import_resolver.with_search_paths(["/proto", "/usr/local/include"])
-}
-
 pub fn resolve_simple_file_test() {
   let proto =
     "syntax = \"proto3\";
@@ -55,40 +35,14 @@ package test;
 message TestMessage {
   string name = 1;
 }"
-  let file_path = "test_simple.proto"
-  use <- create_delete_file(file_path, proto)
 
-  let assert Ok(#(
-    parser.ProtoFile(
-      syntax: "proto3",
-      package: Some("test"),
-      imports: [],
-      messages: [
-        parser.Message(
-          name: "TestMessage",
-          fields: [
-            parser.Field(
-              name: "name",
-              field_type: parser.String,
-              number: 1,
-              oneof_name: option.None,
-              options: [],
-            ),
-          ],
-          nested_messages: [],
-          enums: [],
-          oneofs: [],
-        ),
-      ],
-      enums: [],
-      services: [],
-    ),
-    import_resolver,
-  )) = import_resolver.new() |> import_resolver.resolve_imports(file_path)
+  let sources = dict.from_list([#("test.proto", import_resolver.Raw(proto))])
 
-  assert 1 == dict.size(import_resolver.loaded_files)
+  let assert Ok(resolver) = import_resolver.resolve(sources, "test.proto")
 
-  let registry = import_resolver.get_type_registry(import_resolver)
+  assert 1 == dict.size(resolver.loaded_files)
+
+  let registry = import_resolver.get_type_registry(resolver)
 
   let assert Ok("test.TestMessage") =
     type_registry.resolve_type_reference(registry, "TestMessage", "test")
@@ -96,7 +50,8 @@ message TestMessage {
 
 pub fn resolve_with_imports_test() {
   let base_proto =
-    "syntax = \"proto3\";
+    "
+syntax = \"proto3\";
 package base;
 
 message BaseMessage {
@@ -107,24 +62,23 @@ message BaseMessage {
     "syntax = \"proto3\";
 package dependent;
 
-import \"test_base.proto\";
+import \"base.proto\";
 
 message DependentMessage {
   string name = 1;
 }"
-  let base_path = "test_base.proto"
-  let dependent_path = "test_dependent.proto"
-  use <- create_delete_file(base_path, base_proto)
-  use <- create_delete_file(dependent_path, dependent_proto)
 
-  let assert Ok(#(
-    parser.ProtoFile(package: Some("dependent"), ..),
-    updated_resolver,
-  )) = import_resolver.new() |> import_resolver.resolve_imports(dependent_path)
+  let sources =
+    dict.from_list([
+      #("base.proto", import_resolver.Raw(base_proto)),
+      #("dependent.proto", import_resolver.Raw(dependent_proto)),
+    ])
 
-  assert 2 == dict.size(updated_resolver.loaded_files)
+  let assert Ok(resolver) = import_resolver.resolve(sources, "dependent.proto")
 
-  let registry = import_resolver.get_type_registry(updated_resolver)
+  assert 2 == dict.size(resolver.loaded_files)
+
+  let registry = import_resolver.get_type_registry(resolver)
 
   let assert Ok("base.BaseMessage") =
     type_registry.resolve_type_reference(registry, "BaseMessage", "base")
@@ -142,7 +96,7 @@ pub fn detect_circular_dependency_test() {
     "syntax = \"proto3\";
 package a;
 
-import \"test_b.proto\";
+import \"b.proto\";
 
 message MessageA {
   string id = 1;
@@ -152,51 +106,27 @@ message MessageA {
     "syntax = \"proto3\";
 package b;
 
-import \"test_a.proto\";
+import \"a.proto\";
 
 message MessageB {
   string id = 1;
 }"
-  let test_a_path = "test_a.proto"
-  let test_b_path = "test_b.proto"
 
-  use <- create_delete_file(test_a_path, proto_a)
-  use <- create_delete_file(test_b_path, proto_b)
+  let sources =
+    dict.from_list([
+      #("a.proto", import_resolver.Raw(proto_a)),
+      #("b.proto", import_resolver.Raw(proto_b)),
+    ])
 
-  let assert Error(import_resolver.CircularDependency("test_b.proto")) =
-    import_resolver.new()
-    |> import_resolver.resolve_imports(test_a_path)
-}
-
-pub fn resolve_with_search_paths_test() {
-  let proto_content =
-    "syntax = \"proto3\";
-package searchtest;
-
-message SearchTestMessage {
-  string name = 1;
-}"
-
-  let _ = simplifile.delete("test/proto/search_test.proto")
-  let _ = simplifile.create_directory("test/proto")
-  let assert Ok(_) =
-    simplifile.write("test/proto/search_test.proto", proto_content)
-
-  let resolver =
-    import_resolver.new()
-    |> import_resolver.with_search_paths(["test/proto"])
-
-  let assert Ok(#(parser.ProtoFile(package: Some("searchtest"), ..), _)) =
-    import_resolver.resolve_imports(resolver, "search_test.proto")
-
-  let _ = simplifile.delete("test/proto/search_test.proto")
+  let assert Error(import_resolver.CircularDependency("a.proto")) =
+    import_resolver.resolve(sources, "a.proto")
 }
 
 pub fn file_not_found_test() {
-  let resolver = import_resolver.new()
+  let sources = dict.new()
 
   let assert Error(import_resolver.FileNotFound("non_existent_file.proto")) =
-    import_resolver.resolve_imports(resolver, "non_existent_file.proto")
+    import_resolver.resolve(sources, "non_existent_file.proto")
 }
 
 pub fn get_all_loaded_files_test() {
@@ -212,27 +142,32 @@ message Message1 {
     "syntax = \"proto3\";
 package pkg2;
 
-import \"test_loaded1.proto\";
+import \"file1.proto\";
 
 message Message2 {
   string name = 1;
 }"
 
-  use <- create_delete_file("test_loaded1.proto", proto1)
-  use <- create_delete_file("test_loaded2.proto", proto2)
+  let sources =
+    dict.from_list([
+      #("file1.proto", import_resolver.Raw(proto1)),
+      #("file2.proto", import_resolver.Raw(proto2)),
+    ])
 
-  let assert Ok(#(_, updated_resolver)) =
-    import_resolver.new()
-    |> import_resolver.resolve_imports("test_loaded2.proto")
-  let files = import_resolver.get_all_loaded_files(updated_resolver)
+  let assert Ok(resolver) = import_resolver.resolve(sources, "file2.proto")
+  let files = import_resolver.get_all_loaded_files(resolver)
 
   assert 2 == list.length(files)
 
-  assert ["test_loaded1.proto", "test_loaded2.proto"]
+  assert ["file1.proto", "file2.proto"]
     == files
     |> list.map(fn(entry) { entry.0 })
     |> list.sort(string.compare)
 }
+
+// ============================================================================
+// Import syntax tests
+// ============================================================================
 
 pub fn import_syntax_validation_test() {
   let proto_with_comments =
@@ -247,15 +182,19 @@ message Test {
   string id = 1;
 }"
 
-  let assert Ok(parsed) = parser.parse(proto_with_comments)
+  let assert Ok(parsed) = file.parse(proto_with_comments)
 
   assert [
-      parser.Import(path: "base.proto", public: False, weak: False),
-      parser.Import(path: "public.proto", public: True, weak: False),
-      parser.Import(path: "weak.proto", public: False, weak: True),
+      proto.Import(path: "base.proto", public: False, weak: False),
+      proto.Import(path: "public.proto", public: True, weak: False),
+      proto.Import(path: "weak.proto", public: False, weak: True),
     ]
     == parsed.imports
 }
+
+// ============================================================================
+// Cross-file type resolution tests
+// ============================================================================
 
 pub fn cross_file_type_resolution_test() {
   let base_proto =
@@ -277,14 +216,15 @@ message AppMessage {
   string name = 2;
 }"
 
-  let assert Ok(_) = simplifile.write("base.proto", base_proto)
-  let assert Ok(_) = simplifile.write("app.proto", dependent_proto)
+  let sources =
+    dict.from_list([
+      #("base.proto", import_resolver.Raw(base_proto)),
+      #("app.proto", import_resolver.Raw(dependent_proto)),
+    ])
 
-  let assert Ok(#(_, updated_resolver)) =
-    import_resolver.new()
-    |> import_resolver.resolve_imports("app.proto")
+  let assert Ok(resolver) = import_resolver.resolve(sources, "app.proto")
 
-  let registry = import_resolver.get_type_registry(updated_resolver)
+  let registry = import_resolver.get_type_registry(resolver)
 
   // Should resolve base.BaseMessage
   let assert Ok("base.BaseMessage") =
@@ -295,10 +235,6 @@ message AppMessage {
     type_registry.lookup_type(registry, "base.BaseMessage")
   let assert option.Some(_) =
     type_registry.lookup_type(registry, "app.AppMessage")
-
-  let _ = simplifile.delete("base.proto")
-  let _ = simplifile.delete("app.proto")
-  Nil
 }
 
 pub fn public_import_transitivity_test() {
@@ -331,27 +267,24 @@ message MessageC {
   b.MessageB b_msg = 2;
 }"
 
-  let assert Ok(_) = simplifile.write("a.proto", a_proto)
-  let assert Ok(_) = simplifile.write("b.proto", b_proto)
-  let assert Ok(_) = simplifile.write("c.proto", c_proto)
+  let sources =
+    dict.from_list([
+      #("a.proto", import_resolver.Raw(a_proto)),
+      #("b.proto", import_resolver.Raw(b_proto)),
+      #("c.proto", import_resolver.Raw(c_proto)),
+    ])
 
-  let resolver = import_resolver.new()
+  let assert Ok(resolver) = import_resolver.resolve(sources, "c.proto")
 
-  let assert Ok(#(_, updated_resolver)) =
-    import_resolver.resolve_imports(resolver, "c.proto")
-
-  let public_imports =
-    import_resolver.get_public_imports(updated_resolver, "b.proto")
+  let public_imports = import_resolver.get_public_imports(resolver, "b.proto")
 
   assert True == list.contains(public_imports, "a.proto")
-
-  let _ = simplifile.delete("a.proto")
-  let _ = simplifile.delete("b.proto")
-  let _ = simplifile.delete("c.proto")
-  Nil
 }
 
-// Test nested type references
+// ============================================================================
+// Nested type tests
+// ============================================================================
+
 pub fn nested_type_references_test() {
   let proto =
     "syntax = \"proto3\";
@@ -361,7 +294,7 @@ message Outer {
   message Inner {
     string value = 1;
   }
-  
+
   Inner inner = 1;
 }
 
@@ -369,7 +302,7 @@ message Other {
   Outer.Inner nested = 1;
 }"
 
-  let assert Ok(parsed) = parser.parse(proto)
+  let assert Ok(parsed) = file.parse(proto)
   let registry = type_registry.new()
 
   let assert Ok(updated_registry) =
@@ -388,7 +321,10 @@ message Other {
     type_registry.lookup_type(updated_registry, "test.Outer.Inner")
 }
 
-// Test package collision detection
+// ============================================================================
+// Type collision tests
+// ============================================================================
+
 pub fn package_collision_detection_test() {
   let proto1 =
     "syntax = \"proto3\";
@@ -406,8 +342,8 @@ message Duplicate {
   int32 value = 1;
 }"
 
-  let assert Ok(parsed1) = parser.parse(proto1)
-  let assert Ok(parsed2) = parser.parse(proto2)
+  let assert Ok(parsed1) = file.parse(proto1)
+  let assert Ok(parsed2) = file.parse(proto2)
 
   let registry = type_registry.new()
 
@@ -419,19 +355,23 @@ message Duplicate {
     type_registry.add_file(updated_registry, "file2.proto", parsed2)
 }
 
-// Test well-known types
-pub fn well_known_types_test() {
-  // Test that well-known types are available
-  let well_known_proto_files = well_known_types.get_well_known_proto_files()
+// ============================================================================
+// Well-known types tests
+// ============================================================================
 
-  assert 9 == dict.size(well_known_proto_files)
+pub fn well_known_types_availability_test() {
+  let well_known_proto_files = well_known_type.get_well_known_proto_files()
 
-  let assert Ok(parser.ProtoFile(
+  assert 12 == dict.size(well_known_proto_files)
+
+  let assert Ok(file.ProtoFile(
     package: option.Some("google.protobuf"),
-    messages: [parser.Message(name: "Timestamp", ..), ..],
+    messages: [proto.Message(name: "Timestamp", ..), ..],
     ..,
   )) = dict.get(well_known_proto_files, "google/protobuf/timestamp.proto")
+}
 
+pub fn well_known_types_resolution_test() {
   let proto_using_wkt =
     "syntax = \"proto3\";
 package myapp;
@@ -443,25 +383,23 @@ message Event {
   google.protobuf.Timestamp created_at = 2;
 }"
 
-  let assert Ok(_) = simplifile.write("event.proto", proto_using_wkt)
+  let sources =
+    dict.from_list([#("event.proto", import_resolver.Raw(proto_using_wkt))])
 
-  let resolver = import_resolver.new()
+  let assert Ok(resolver) = import_resolver.resolve(sources, "event.proto")
 
-  let assert Ok(#(_, updated_resolver)) =
-    import_resolver.resolve_imports(resolver, "event.proto")
+  let registry = import_resolver.get_type_registry(resolver)
 
-  let registry = import_resolver.get_type_registry(updated_resolver)
-
-  let assert option.Some(_) =
-    type_registry.lookup_type(registry, "google.protobuf.Timestamp")
-
-  let _ = simplifile.delete("event.proto")
-  Nil
+  assert option.Some(#(
+      "google/protobuf/timestamp.proto",
+      proto.MessageType("Timestamp"),
+    ))
+    == type_registry.lookup_type(registry, "google.protobuf.Timestamp")
 }
 
 pub fn field_mask_well_known_type_test() {
   assert True
-    == well_known_types.is_well_known_import("google/protobuf/field_mask.proto")
+    == well_known_type.is_well_known_import("google/protobuf/field_mask.proto")
 
   let proto_using_field_mask =
     "syntax = \"proto3\";
@@ -474,80 +412,24 @@ message UpdateRequest {
   google.protobuf.FieldMask field_mask = 2;
 }"
 
-  let assert Ok(_) =
-    simplifile.write("update_request.proto", proto_using_field_mask)
+  let sources =
+    dict.from_list([
+      #("update_request.proto", import_resolver.Raw(proto_using_field_mask)),
+    ])
 
-  let resolver = import_resolver.new()
+  let assert Ok(resolver) =
+    import_resolver.resolve(sources, "update_request.proto")
 
-  let assert Ok(#(_, updated_resolver)) =
-    import_resolver.resolve_imports(resolver, "update_request.proto")
-
-  let registry = import_resolver.get_type_registry(updated_resolver)
+  let registry = import_resolver.get_type_registry(resolver)
 
   let assert option.Some(_) =
     type_registry.lookup_type(registry, "google.protobuf.FieldMask")
-
-  let _ = simplifile.delete("update_request.proto")
-  Nil
 }
 
-pub fn codegen_with_imports_test() {
-  let base_proto =
-    "syntax = \"proto3\";
-package base;
+// ============================================================================
+// Service parsing tests
+// ============================================================================
 
-enum Status {
-  UNKNOWN = 0;
-  ACTIVE = 1;
-  INACTIVE = 2;
-}
-
-message BaseMessage {
-  string id = 1;
-  Status status = 2;
-}"
-
-  let app_proto =
-    "syntax = \"proto3\";
-package app;
-
-import \"base.proto\";
-
-message AppMessage {
-  base.BaseMessage base = 1;
-  base.Status status = 2;
-}"
-
-  let assert Ok(_) = simplifile.write("base.proto", base_proto)
-  let assert Ok(_) = simplifile.write("app.proto", app_proto)
-
-  let assert Ok(#(_, updated_resolver)) =
-    import_resolver.new() |> import_resolver.resolve_imports("app.proto")
-
-  let files = import_resolver.get_all_loaded_files(updated_resolver)
-  let registry = import_resolver.get_type_registry(updated_resolver)
-
-  // Convert to Path type for codegen
-  let paths =
-    list.map(files, fn(entry) {
-      let #(path, content) = entry
-      parser.Path(path, content)
-    })
-
-  // Test that code generation works with imports
-  let _ = simplifile.create_directory_all("./test_output")
-  let assert Ok(generated_files) =
-    codegen.generate_combined_proto_file(paths, registry, "./test_output")
-
-  assert 1 == list.length(generated_files)
-
-  let _ = simplifile.delete("base.proto")
-  let _ = simplifile.delete("app.proto")
-  let _ = simplifile.delete("./test_output")
-  Nil
-}
-
-// Test service definition parsing
 pub fn service_parsing_test() {
   let service_proto =
     "syntax = \"proto3\";
@@ -569,7 +451,7 @@ service UserService {
   rpc Chat(stream GetUserRequest) returns (stream GetUserResponse);
 }"
 
-  let assert Ok(parsed) = parser.parse(service_proto)
+  let assert Ok(parsed) = file.parse(service_proto)
 
   // Should have one service
   assert 1 == list.length(parsed.services)
@@ -590,28 +472,104 @@ service UserService {
 
   // StreamUsers - server streaming
   assert "StreamUsers" == stream_users.name
-  assert "GetUserRequest" == stream_users.input_type
-  assert "GetUserResponse" == stream_users.output_type
   assert False == stream_users.client_streaming
   assert True == stream_users.server_streaming
 
   // UploadData - client streaming
   assert "UploadData" == upload_data.name
-  assert "GetUserRequest" == upload_data.input_type
-  assert "GetUserResponse" == upload_data.output_type
   assert True == upload_data.client_streaming
   assert False == upload_data.server_streaming
 
   // Chat - bidirectional streaming
   assert "Chat" == chat.name
-  assert "GetUserRequest" == chat.input_type
-  assert "GetUserResponse" == chat.output_type
   assert True == chat.client_streaming
   assert True == chat.server_streaming
 }
 
-// Test service code generation
-pub fn service_code_generation_test() {
+// ============================================================================
+// Code generation snapshot tests
+// ============================================================================
+
+pub fn codegen_simple_message_test() {
+  let proto =
+    "syntax = \"proto3\";
+package test;
+
+message SimpleMessage {
+  string name = 1;
+  int32 value = 2;
+}"
+
+  let sources = dict.from_list([#("test.proto", import_resolver.Raw(proto))])
+
+  let assert Ok(resolver) = import_resolver.resolve(sources, "test.proto")
+
+  let files = import_resolver.get_all_loaded_files(resolver)
+  let registry = import_resolver.get_type_registry(resolver)
+
+  let paths =
+    list.map(files, fn(entry) {
+      let #(path, content) = entry
+      file.Path(path, content)
+    })
+
+  let assert Ok(generated) = codegen.generate(files: paths, registry: registry)
+
+  generated
+  |> birdie.snap(title: "Simple message code generation")
+}
+
+pub fn codegen_with_imports_test() {
+  let base_proto =
+    "syntax = \"proto3\";
+package base;
+
+enum Status {
+  UNKNOWN = 0;
+  ACTIVE = 1;
+  INACTIVE = 2;
+}
+
+message Message {
+  string id = 1;
+  Status status = 2;
+}"
+
+  let app_proto =
+    "syntax = \"proto3\";
+package app;
+
+import \"base.proto\";
+
+message Message {
+  base.Message base = 1;
+  base.Status status = 2;
+}"
+
+  let sources =
+    dict.from_list([
+      #("base.proto", import_resolver.Raw(base_proto)),
+      #("app.proto", import_resolver.Raw(app_proto)),
+    ])
+
+  let assert Ok(resolver) = import_resolver.resolve(sources, "app.proto")
+
+  let files = import_resolver.get_all_loaded_files(resolver)
+  let registry = import_resolver.get_type_registry(resolver)
+
+  let paths =
+    list.map(files, fn(entry) {
+      let #(path, content) = entry
+      file.Path(path, content)
+    })
+
+  let assert Ok(generated) = codegen.generate(files: paths, registry: registry)
+
+  generated
+  |> birdie.snap(title: "Code generation with imports")
+}
+
+pub fn codegen_service_test() {
   let service_proto =
     "syntax = \"proto3\";
 package testservice;
@@ -628,44 +586,22 @@ service TestService {
   rpc Process(Request) returns (Response);
 }"
 
-  let assert Ok(_) = simplifile.write("test_service.proto", service_proto)
+  let sources =
+    dict.from_list([#("service.proto", import_resolver.Raw(service_proto))])
 
-  let assert Ok(#(_, updated_resolver)) =
-    import_resolver.new()
-    |> import_resolver.resolve_imports("test_service.proto")
+  let assert Ok(resolver) = import_resolver.resolve(sources, "service.proto")
 
-  let files = import_resolver.get_all_loaded_files(updated_resolver)
-  let registry = import_resolver.get_type_registry(updated_resolver)
+  let files = import_resolver.get_all_loaded_files(resolver)
+  let registry = import_resolver.get_type_registry(resolver)
 
-  // Convert to Path type for codegen
   let paths =
     list.map(files, fn(entry) {
       let #(path, content) = entry
-      parser.Path(path, content)
+      file.Path(path, content)
     })
 
-  // Test that code generation works with services
-  let _ = simplifile.create_directory_all("./test_service_output")
-  let assert Ok(generated_files) =
-    codegen.generate_combined_proto_file(
-      paths,
-      registry,
-      "./test_service_output",
-    )
+  let assert Ok(generated) = codegen.generate(files: paths, registry: registry)
 
-  // Should generate one file
-  assert 1 == list.length(generated_files)
-
-  // Check that the generated file contains service code
-  let assert [#(generated_path, generated_content)] = generated_files
-
-  // Should contain service error type and service comment
-  assert True == string.contains(generated_content, "TestServiceError")
-  assert True == string.contains(generated_content, "// Service: TestService")
-
-  // Cleanup
-  let _ = simplifile.delete("test_service.proto")
-  let _ = simplifile.delete(generated_path)
-  let _ = simplifile.delete("./test_service_output")
-  Nil
+  generated
+  |> birdie.snap(title: "Service code generation")
 }

@@ -1,5 +1,5 @@
 name = "protozoa"
-version = "2.0.3"
+version = "3.0.0"
 
 # Fill out these fields if you intend to generate HTML documentation or publish
 # your project to the Hex package manager.
@@ -14,12 +14,10 @@ repository = { type = "github", user = "renatillas", repo = "protozoa" }
 
 [dependencies]
 gleam_stdlib = ">= 0.44.0 and < 2.0.0"
-simplifile = ">= 2.3.0 and < 3.0.0"
-filepath = ">= 1.0.0 and < 2.0.0"
-tom = ">= 2.0.0 and < 3.0.0"
 justin = ">= 1.0.0 and < 2.0.0"
 gleam_http = ">= 4.2.0 and < 5.0.0"
 gleam_regexp = ">= 1.1.1 and < 2.0.0"
+nibble = ">= 1.1.4 and < 2.0.0"
 
 [dev-dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"

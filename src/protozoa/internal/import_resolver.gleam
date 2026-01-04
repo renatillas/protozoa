@@ -2,17 +2,15 @@ import gleam/dict
 import gleam/list
 import gleam/result
 import gleam/set
-import protozoa/internal/type_registry.{type TypeRegistry}
-import protozoa/internal/well_known_types
-import protozoa/parser.{type ProtoFile}
-import simplifile
+import protozoa/internal/type_registry
+import protozoa/internal/well_known_type
+import protozoa/parser/file
 
 pub type ImportResolver {
   ImportResolver(
-    search_paths: List(String),
-    loaded_files: dict.Dict(String, ProtoFile),
+    loaded_files: dict.Dict(String, file.ProtoFile),
     dependency_graph: dict.Dict(String, List(String)),
-    type_registry: TypeRegistry,
+    type_registry: type_registry.TypeRegistry,
     public_imports: dict.Dict(String, List(String)),
   )
 }
@@ -20,25 +18,22 @@ pub type ImportResolver {
 pub type Error {
   FileNotFound(path: String)
   CircularDependency(path: String)
-  ReadError(path: String, reason: String)
   ParseError(path: String, reason: String)
-  WellKnownTypeNotFound(path: String)
+  TypeError(path: String, reason: String)
 }
 
 pub fn describe_error(error: Error) -> String {
   case error {
     FileNotFound(path) -> "File not found: " <> path
     CircularDependency(path) -> "Circular dependency detected at: " <> path
-    ReadError(path, reason) -> "Failed to read file " <> path <> ": " <> reason
     ParseError(path, reason) ->
       "Failed to parse file " <> path <> ": " <> reason
-    WellKnownTypeNotFound(path) -> "Well-known type not found: " <> path
+    TypeError(path, reason) -> "Type error in " <> path <> ": " <> reason
   }
 }
 
 pub fn new() -> ImportResolver {
   ImportResolver(
-    search_paths: ["."],
     loaded_files: dict.new(),
     dependency_graph: dict.new(),
     type_registry: type_registry.new(),
@@ -46,164 +41,174 @@ pub fn new() -> ImportResolver {
   )
 }
 
-pub fn with_search_paths(
-  resolver: ImportResolver,
-  paths: List(String),
-) -> ImportResolver {
-  ImportResolver(..resolver, search_paths: paths)
+/// A proto file source that can be either pre-parsed content or raw string
+pub type ProtoSource {
+  /// Pre-parsed ProtoFile
+  Parsed(file.ProtoFile)
+  /// Raw proto content string to be parsed
+  Raw(String)
 }
 
-fn find_file(path: String, search_paths: List(String)) -> Result(String, Error) {
-  case search_paths {
-    [] -> Error(FileNotFound(path))
-    [search_path, ..rest] -> {
-      let full_path = case search_path {
-        "." -> path
-        _ -> search_path <> "/" <> path
-      }
-      case simplifile.is_file(full_path) {
-        Ok(True) -> Ok(full_path)
-        _ -> find_file(path, rest)
-      }
-    }
-  }
+/// Resolve imports from a collection of in-memory proto sources.
+///
+/// The `sources` dict maps file paths to their content (either parsed or raw).
+/// The `entry_point` is the main file to resolve from.
+///
+/// Well-known types (google/protobuf/*) are automatically available and don't
+/// need to be included in sources.
+pub fn resolve(
+  sources: dict.Dict(String, ProtoSource),
+  entry_point: String,
+) -> Result(ImportResolver, Error) {
+  // First, parse any raw sources
+  use parsed_sources <- result.try(parse_raw_sources(sources))
+
+  // Start with an empty resolver
+  let resolver = new()
+
+  // Resolve from the entry point
+  resolve_file(resolver, entry_point, parsed_sources, set.new())
 }
 
-fn detect_circular_dependency(
-  path: String,
-  visiting: set.Set(String),
-  graph: dict.Dict(String, List(String)),
-) -> Result(Nil, Error) {
-  case set.contains(visiting, path) {
-    True -> Error(CircularDependency(path))
-    False -> {
-      let new_visiting = set.insert(visiting, path)
-      case dict.get(graph, path) {
-        Ok(deps) -> {
-          list.try_each(deps, fn(dep) {
-            detect_circular_dependency(dep, new_visiting, graph)
-          })
+/// Parse all raw sources into ProtoFiles
+fn parse_raw_sources(
+  sources: dict.Dict(String, ProtoSource),
+) -> Result(dict.Dict(String, file.ProtoFile), Error) {
+  dict.to_list(sources)
+  |> list.try_fold(dict.new(), fn(acc, entry) {
+    let #(path, source) = entry
+    case source {
+      Parsed(proto_file) -> Ok(dict.insert(acc, path, proto_file))
+      Raw(content) -> {
+        case file.parse(content) {
+          Ok(proto_file) -> Ok(dict.insert(acc, path, proto_file))
+          Error(parse_error) ->
+            Error(ParseError(path, file.describe_error(parse_error)))
         }
-        Error(_) -> Ok(Nil)
       }
     }
-  }
+  })
 }
 
-pub fn resolve_imports(
+/// Resolve a file and its imports from in-memory sources
+fn resolve_file(
   resolver: ImportResolver,
   file_path: String,
-) -> Result(#(ProtoFile, ImportResolver), Error) {
-  case dict.get(resolver.loaded_files, file_path) {
-    Ok(proto_file) -> Ok(#(proto_file, resolver))
-    Error(_) -> {
-      // Check if it's a well-known type
-      let proto_file = case well_known_types.is_well_known_import(file_path) {
-        True -> {
-          case
-            dict.get(well_known_types.get_well_known_proto_files(), file_path)
-          {
-            Ok(wkt) -> Ok(wkt)
-            Error(_) -> Error(WellKnownTypeNotFound(file_path))
-          }
-        }
-        False -> {
-          use full_path <- result.try(find_file(
-            file_path,
-            resolver.search_paths,
-          ))
-          use content <- result.try(
-            simplifile.read(full_path)
-            |> result.map_error(fn(reason) {
-              ReadError(file_path, reason: simplifile.describe_error(reason))
+  sources: dict.Dict(String, file.ProtoFile),
+  visiting: set.Set(String),
+) -> Result(ImportResolver, Error) {
+  // Check for circular dependency
+  case set.contains(visiting, file_path) {
+    True -> Error(CircularDependency(file_path))
+    False -> {
+      // Check if already loaded
+      case dict.get(resolver.loaded_files, file_path) {
+        Ok(_) -> Ok(resolver)
+        Error(_) -> {
+          // Try to find the file
+          use proto_file <- result.try(lookup_file(file_path, sources))
+
+          let new_visiting = set.insert(visiting, file_path)
+
+          // Get import paths
+          let import_paths = list.map(proto_file.imports, fn(imp) { imp.path })
+
+          // Track public imports
+          let public_import_paths =
+            proto_file.imports
+            |> list.filter(fn(imp) { imp.public })
+            |> list.map(fn(imp) { imp.path })
+
+          // Update the resolver with this file
+          let resolver_with_file =
+            ImportResolver(
+              ..resolver,
+              loaded_files: dict.insert(
+                resolver.loaded_files,
+                file_path,
+                proto_file,
+              ),
+              dependency_graph: dict.insert(
+                resolver.dependency_graph,
+                file_path,
+                import_paths,
+              ),
+              public_imports: dict.insert(
+                resolver.public_imports,
+                file_path,
+                public_import_paths,
+              ),
+            )
+
+          // Recursively resolve imports
+          use resolver_after_imports <- result.try(
+            list.try_fold(proto_file.imports, resolver_with_file, fn(res, imp) {
+              resolve_file(res, imp.path, sources, new_visiting)
             }),
           )
-          parser.parse(content)
-          |> result.map_error(fn(parse_error) {
-            ParseError(
+
+          // Add to type registry
+          use updated_registry <- result.try(
+            type_registry.add_file(
+              resolver_after_imports.type_registry,
               file_path,
-              reason: parser.describe_parse_error(parse_error),
+              proto_file,
             )
-          })
+            |> result.map_error(fn(error) {
+              TypeError(file_path, type_registry.describe_error(error))
+            }),
+          )
+
+          Ok(
+            ImportResolver(
+              ..resolver_after_imports,
+              type_registry: updated_registry,
+            ),
+          )
         }
       }
-
-      use proto_file <- result.try(proto_file)
-
-      let import_paths = list.map(proto_file.imports, fn(imp) { imp.path })
-
-      // Track public imports
-      let public_import_paths =
-        proto_file.imports
-        |> list.filter(fn(imp) { imp.public })
-        |> list.map(fn(imp) { imp.path })
-
-      let new_graph =
-        dict.insert(resolver.dependency_graph, file_path, import_paths)
-      use _ <- result.try(detect_circular_dependency(
-        file_path,
-        set.new(),
-        new_graph,
-      ))
-
-      let resolver_with_imports =
-        ImportResolver(
-          ..resolver,
-          loaded_files: dict.insert(
-            resolver.loaded_files,
-            file_path,
-            proto_file,
-          ),
-          dependency_graph: new_graph,
-          public_imports: dict.insert(
-            resolver.public_imports,
-            file_path,
-            public_import_paths,
-          ),
-        )
-
-      use resolver_after_imports <- result.try(
-        list.try_fold(proto_file.imports, resolver_with_imports, fn(res, imp) {
-          use #(_, updated_res) <- result.try(resolve_imports(res, imp.path))
-          Ok(updated_res)
-        }),
-      )
-
-      use updated_registry <- result.try(
-        type_registry.add_file(
-          resolver_after_imports.type_registry,
-          file_path,
-          proto_file,
-        )
-        |> result.map_error(fn(error) {
-          ReadError(
-            path: file_path,
-            reason: type_registry.describe_error(error),
-          )
-        }),
-      )
-
-      let final_resolver =
-        ImportResolver(
-          ..resolver_after_imports,
-          type_registry: updated_registry,
-        )
-
-      Ok(#(proto_file, final_resolver))
     }
   }
 }
 
-pub fn get_type_registry(resolver: ImportResolver) -> TypeRegistry {
+/// Look up a file from sources or well-known types
+fn lookup_file(
+  file_path: String,
+  sources: dict.Dict(String, file.ProtoFile),
+) -> Result(file.ProtoFile, Error) {
+  // First check user-provided sources
+  case dict.get(sources, file_path) {
+    Ok(proto_file) -> Ok(proto_file)
+    Error(_) -> {
+      // Check if it's a well-known type
+      case well_known_type.is_well_known_import(file_path) {
+        True -> {
+          case
+            dict.get(well_known_type.get_well_known_proto_files(), file_path)
+          {
+            Ok(wkt) -> Ok(wkt)
+            Error(_) -> Error(FileNotFound(file_path))
+          }
+        }
+        False -> Error(FileNotFound(file_path))
+      }
+    }
+  }
+}
+
+/// Get the type registry from the resolver
+pub fn get_type_registry(resolver: ImportResolver) -> type_registry.TypeRegistry {
   resolver.type_registry
 }
 
+/// Get all loaded files as a list of (path, ProtoFile) tuples
 pub fn get_all_loaded_files(
   resolver: ImportResolver,
-) -> List(#(String, ProtoFile)) {
+) -> List(#(String, file.ProtoFile)) {
   dict.to_list(resolver.loaded_files)
 }
 
+/// Get transitive public imports for a file
 pub fn get_public_imports(
   resolver: ImportResolver,
   file_path: String,

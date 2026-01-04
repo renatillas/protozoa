@@ -1,0 +1,12 @@
+name = "test_protozoa"
+version = "0.1.0"
+
+description = "Integration tests for protozoa - validates generated code compiles and works"
+
+[dependencies]
+gleam_stdlib = ">= 0.44.0 and < 2.0.0"
+protozoa = { path = ".." }
+simplifile = ">= 2.0.0 and < 3.0.0"
+
+[dev-dependencies]
+gleeunit = ">= 1.0.0 and < 2.0.0"

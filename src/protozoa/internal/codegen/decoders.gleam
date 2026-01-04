@@ -5,53 +5,111 @@
 
 import gleam/int
 import gleam/list
+import gleam/option
 import gleam/string
 import justin
 import protozoa/internal/codegen/types.{capitalize_first, flatten_type_name}
 import protozoa/internal/type_registry.{type TypeRegistry}
-import protozoa/parser.{type Field, type Message, type ProtoType}
+import protozoa/parser/proto.{type Field, type Message, type Type}
 
 /// Generate all decoders for a list of messages
-pub fn generate_decoders_with_registry(
+pub fn generate_decoders(
   messages: List(Message),
   registry: TypeRegistry,
   file_path: String,
 ) -> String {
+  // Get the package for type resolution
+  let current_package = case type_registry.get_file_package(registry, file_path)
+  {
+    option.Some(pkg) -> pkg
+    option.None -> ""
+  }
+
   let all_messages = collect_all_messages_flattened(messages)
 
-  all_messages
+  // Resolve enum types in all messages
+  let resolved_messages =
+    list.map(all_messages, fn(msg) {
+      resolve_message_types(msg, registry, current_package)
+    })
+
+  resolved_messages
   |> list.map(fn(message) {
-    generate_message_decoder_with_registry(message, registry, file_path)
+    generate_message_decoder(message, registry, file_path)
   })
   |> string.join("\n\n")
 }
 
-/// Generate decoder for a single message
-pub fn generate_message_decoder_with_registry(
-  message: Message,
-  _registry: TypeRegistry,
-  _file_path: String,
-) -> String {
-  let decoder_fn_name = justin.snake_case(message.name) <> "_decoder"
-  let decode_fn_name = "decode_" <> justin.snake_case(message.name)
+/// Resolve field types in a message (convert MessageType to EnumType if needed)
+fn resolve_message_types(
+  msg: Message,
+  registry: TypeRegistry,
+  current_package: String,
+) -> Message {
+  let resolved_fields =
+    list.map(msg.fields, fn(field) {
+      proto.Field(
+        ..field,
+        field_type: type_registry.resolve_field_type(
+          registry,
+          field.field_type,
+          current_package,
+        ),
+      )
+    })
 
-  let decoder_body = generate_decoder_function_body(message)
+  let resolved_oneofs =
+    list.map(msg.oneofs, fn(oneof) {
+      let resolved_oneof_fields =
+        list.map(oneof.fields, fn(field) {
+          proto.Field(
+            ..field,
+            field_type: type_registry.resolve_field_type(
+              registry,
+              field.field_type,
+              current_package,
+            ),
+          )
+        })
+      proto.Oneof(..oneof, fields: resolved_oneof_fields)
+    })
+
+  proto.Message(..msg, fields: resolved_fields, oneofs: resolved_oneofs)
+}
+
+/// Generate decoder for a single message
+pub fn generate_message_decoder(
+  message: Message,
+  registry: TypeRegistry,
+  file_path: String,
+) -> String {
+  // Get qualified names for function and type
+  let qualified_fn_name =
+    types.get_qualified_function_name(message.name, registry, file_path)
+  let qualified_type_name =
+    types.get_qualified_type_name(message.name, registry, file_path)
+  let decoder_fn_name = qualified_fn_name <> "_decoder"
+  let decode_fn_name = "decode_" <> qualified_fn_name
+
+  let decoder_body =
+    generate_decoder_function_body(message, registry, file_path)
   let wrapper_body = generate_wrapper_function_body(message, decoder_fn_name)
-  let oneof_helpers = generate_oneof_helper_functions(message)
-  let map_helpers = generate_map_helper_functions(message)
+  let oneof_helpers =
+    generate_oneof_helper_functions(message, registry, file_path)
+  let map_helpers = generate_map_helper_functions(message, registry, file_path)
 
   let main_decoder =
     "pub fn "
     <> decoder_fn_name
     <> "() -> decode.Decoder("
-    <> message.name
+    <> qualified_type_name
     <> ") {\n"
     <> decoder_body
     <> "\n}\n\n"
     <> "pub fn "
     <> decode_fn_name
     <> "(data: BitArray) -> Result("
-    <> message.name
+    <> qualified_type_name
     <> ", List(decode.DecodeError)) {\n"
     <> wrapper_body
     <> "\n}"
@@ -71,26 +129,41 @@ pub fn generate_message_decoder_with_registry(
 
 // Helper functions
 
-fn generate_oneof_helper_functions(message: Message) -> String {
+fn generate_oneof_helper_functions(
+  message: Message,
+  registry: TypeRegistry,
+  file_path: String,
+) -> String {
+  let qualified_fn_name =
+    types.get_qualified_function_name(message.name, registry, file_path)
   message.oneofs
-  |> list.map(fn(oneof) { generate_single_oneof_decoder(message.name, oneof) })
+  |> list.map(fn(oneof) {
+    generate_single_oneof_decoder(qualified_fn_name, oneof)
+  })
   |> string.join("\n\n")
 }
 
-fn generate_map_helper_functions(message: Message) -> String {
+fn generate_map_helper_functions(
+  message: Message,
+  registry: TypeRegistry,
+  file_path: String,
+) -> String {
   let map_fields =
     list.filter(message.fields, fn(field) {
       case field.field_type {
-        parser.Map(_, _) -> True
+        proto.Map(_, _) -> True
         _ -> False
       }
     })
 
+  let msg_prefix =
+    types.get_qualified_function_name(message.name, registry, file_path)
+
   list.map(map_fields, fn(field) {
     case field.field_type {
-      parser.Map(key_type, value_type) -> {
+      proto.Map(key_type, value_type) -> {
         let field_num = int.to_string(field.number)
-        generate_map_entry_decoder(field_num, key_type, value_type)
+        generate_map_entry_decoder(msg_prefix, field_num, key_type, value_type)
       }
       _ -> ""
       // This shouldn't happen due to filtering
@@ -100,11 +173,13 @@ fn generate_map_helper_functions(message: Message) -> String {
 }
 
 fn generate_map_entry_decoder(
+  msg_prefix: String,
   field_num: String,
-  key_type: ProtoType,
-  value_type: ProtoType,
+  key_type: Type,
+  value_type: Type,
 ) -> String {
-  let function_name = "map_entry_" <> field_num <> "_decoder"
+  let function_name =
+    msg_prefix <> "_map_entry_" <> field_num <> "_decoder"
   let key_decoder = generate_map_field_decoder(key_type, "1")
   let value_decoder = generate_map_field_decoder(value_type, "2")
 
@@ -133,33 +208,57 @@ fn generate_map_entry_decoder(
   <> "}"
 }
 
-fn generate_map_field_decoder(
-  proto_type: ProtoType,
-  field_num: String,
-) -> String {
+fn generate_map_field_decoder(proto_type: Type, field_num: String) -> String {
   case proto_type {
-    parser.String -> "decode.string_with_default(" <> field_num <> ", \"\")"
-    parser.Int32 -> "decode.int32_with_default(" <> field_num <> ", 0)"
-    parser.Bool -> "decode.bool_with_default(" <> field_num <> ", False)"
-    parser.MessageType("Value") ->
+    proto.String -> "decode.string_with_default(" <> field_num <> ", \"\")"
+    proto.Int32 -> "decode.int32_with_default(" <> field_num <> ", 0)"
+    proto.Int64 -> "decode.int64_with_default(" <> field_num <> ", 0)"
+    proto.UInt32 -> "decode.uint32_with_default(" <> field_num <> ", 0)"
+    proto.UInt64 -> "decode.uint64_with_default(" <> field_num <> ", 0)"
+    proto.SInt32 -> "decode.sint32(" <> field_num <> ")"
+    proto.SInt64 -> "decode.sint64(" <> field_num <> ")"
+    proto.Fixed32 -> "decode.fixed32(" <> field_num <> ")"
+    proto.Fixed64 -> "decode.fixed64(" <> field_num <> ")"
+    proto.SFixed32 -> "decode.sfixed32(" <> field_num <> ")"
+    proto.SFixed64 -> "decode.sfixed64(" <> field_num <> ")"
+    proto.Bool -> "decode.bool_with_default(" <> field_num <> ", False)"
+    proto.Bytes -> "decode.bytes(" <> field_num <> ")"
+    proto.Float -> "decode.float(" <> field_num <> ")"
+    proto.Double -> "decode.double(" <> field_num <> ")"
+    proto.MessageType("Value") ->
       "decode.nested_message(" <> field_num <> ", value_decoder())"
-    parser.MessageType(name) -> {
+    proto.MessageType(name) -> {
       let decoder_name =
         justin.snake_case(flatten_type_name(name)) <> "_decoder"
       "decode.nested_message(" <> field_num <> ", " <> decoder_name <> "())"
     }
+    proto.EnumType(name) ->
+      "decode_" <> justin.snake_case(flatten_type_name(name)) <> "_field(" <> field_num <> ")"
     _ -> "decode.string_with_default(" <> field_num <> ", \"\")"
-    // fallback
+    // fallback for unsupported types
   }
 }
 
-fn get_gleam_type(proto_type: ProtoType) -> String {
+fn get_gleam_type(proto_type: Type) -> String {
   case proto_type {
-    parser.String -> "String"
-    parser.Int32 -> "Int"
-    parser.Bool -> "Bool"
-    parser.MessageType("Value") -> "Value"
-    parser.MessageType(name) -> flatten_type_name(name)
+    proto.String -> "String"
+    proto.Int32 -> "Int"
+    proto.Int64 -> "Int"
+    proto.UInt32 -> "Int"
+    proto.UInt64 -> "Int"
+    proto.SInt32 -> "Int"
+    proto.SInt64 -> "Int"
+    proto.Fixed32 -> "Int"
+    proto.Fixed64 -> "Int"
+    proto.SFixed32 -> "Int"
+    proto.SFixed64 -> "Int"
+    proto.Bool -> "Bool"
+    proto.Bytes -> "BitArray"
+    proto.Float -> "Float"
+    proto.Double -> "Float"
+    proto.MessageType("Value") -> "Value"
+    proto.MessageType(name) -> flatten_type_name(name)
+    proto.EnumType(name) -> flatten_type_name(name)
     _ -> "String"
     // fallback
   }
@@ -167,7 +266,7 @@ fn get_gleam_type(proto_type: ProtoType) -> String {
 
 fn generate_single_oneof_decoder(
   message_name: String,
-  oneof: parser.Oneof,
+  oneof: proto.Oneof,
 ) -> String {
   let function_name = "oneof_" <> justin.snake_case(oneof.name) <> "_decoder"
   let oneof_type_name =
@@ -186,17 +285,17 @@ fn generate_single_oneof_decoder(
   <> "}"
 }
 
-fn generate_oneof_field_checks(fields: List(parser.Field)) -> String {
+fn generate_oneof_field_checks(fields: List(proto.Field)) -> String {
   case fields {
     [] -> "    Ok(option.None)\n"
     [field] -> {
       let field_num = int.to_string(field.number)
       let base_variant_name = capitalize_first(field.name)
       let variant_name = case base_variant_name, field.field_type {
-        "Empty", parser.MessageType("google.protobuf.Empty") -> "EmptyData"
-        "StringValue", parser.String -> "StringValueVariant"
-        "BoolValue", parser.Bool -> "BoolValueVariant"
-        "ListValue", parser.MessageType("ListValue") -> "ListValueVariant"
+        "Empty", proto.MessageType("google.protobuf.Empty") -> "EmptyData"
+        "StringValue", proto.String -> "StringValueVariant"
+        "BoolValue", proto.Bool -> "BoolValueVariant"
+        "ListValue", proto.MessageType("ListValue") -> "ListValueVariant"
         name, _ -> name
       }
       let field_decoder = get_field_decoder_for_type(field.field_type)
@@ -220,10 +319,10 @@ fn generate_oneof_field_checks(fields: List(parser.Field)) -> String {
       let field_num = int.to_string(field.number)
       let base_variant_name = capitalize_first(field.name)
       let variant_name = case base_variant_name, field.field_type {
-        "Empty", parser.MessageType("google.protobuf.Empty") -> "EmptyData"
-        "StringValue", parser.String -> "StringValueVariant"
-        "BoolValue", parser.Bool -> "BoolValueVariant"
-        "ListValue", parser.MessageType("ListValue") -> "ListValueVariant"
+        "Empty", proto.MessageType("google.protobuf.Empty") -> "EmptyData"
+        "StringValue", proto.String -> "StringValueVariant"
+        "BoolValue", proto.Bool -> "BoolValueVariant"
+        "ListValue", proto.MessageType("ListValue") -> "ListValueVariant"
         name, _ -> name
       }
       let field_decoder = get_field_decoder_for_type(field.field_type)
@@ -251,20 +350,20 @@ fn generate_oneof_field_checks(fields: List(parser.Field)) -> String {
   }
 }
 
-fn get_field_decoder_for_type(field_type: parser.ProtoType) -> String {
+fn get_field_decoder_for_type(field_type: proto.Type) -> String {
   case field_type {
-    parser.String -> "decode.string_field"
-    parser.Int32 -> "decode.int32_field"
-    parser.Bool -> "decode.bool_field"
-    parser.Bytes -> "decode.bytes_field"
-    parser.Float -> "decode.float_field"
-    parser.Double -> "decode.double_field"
-    parser.MessageType(name) -> {
+    proto.String -> "decode.string_field"
+    proto.Int32 -> "decode.int32_field"
+    proto.Bool -> "decode.bool_field"
+    proto.Bytes -> "decode.bytes_field"
+    proto.Float -> "decode.float_field"
+    proto.Double -> "decode.double_field"
+    proto.MessageType(name) -> {
       let decoder_name =
         justin.snake_case(flatten_type_name(name)) <> "_decoder"
       "decode.message_field(_, " <> decoder_name <> "())"
     }
-    parser.EnumType(name) -> {
+    proto.EnumType(name) -> {
       let decoder_name =
         "decode_" <> justin.snake_case(flatten_type_name(name)) <> "_from_field"
       decoder_name
@@ -274,10 +373,16 @@ fn get_field_decoder_for_type(field_type: parser.ProtoType) -> String {
   }
 }
 
-fn generate_decoder_function_body(message: Message) -> String {
+fn generate_decoder_function_body(
+  message: Message,
+  registry: TypeRegistry,
+  file_path: String,
+) -> String {
+  let qualified_type_name =
+    types.get_qualified_type_name(message.name, registry, file_path)
   let field_decoders =
     message.fields
-    |> list.map(generate_field_decoder)
+    |> list.map(fn(field) { generate_field_decoder(message, field, registry, file_path) })
     |> string.join("\n")
 
   // Generate oneof decoders using helper functions
@@ -295,7 +400,7 @@ fn generate_decoder_function_body(message: Message) -> String {
     })
     |> string.join("\n")
 
-  let constructor_call = generate_constructor_call(message)
+  let constructor_call = generate_constructor_call(message, qualified_type_name)
 
   case field_decoders, oneof_decoders {
     "", "" -> constructor_call
@@ -305,91 +410,108 @@ fn generate_decoder_function_body(message: Message) -> String {
   }
 }
 
-fn generate_field_decoder(field: Field) -> String {
+fn generate_field_decoder(
+  message: Message,
+  field: Field,
+  registry: TypeRegistry,
+  file_path: String,
+) -> String {
   let _field_num = int.to_string(field.number)
-  let decoder_call = generate_field_decoder_call(field)
+  let decoder_call = generate_field_decoder_call(message, field, registry, file_path)
 
   let escaped_field_name = types.escape_keyword(field.name)
   "  use " <> escaped_field_name <> " <- decode.then(" <> decoder_call <> ")"
 }
 
-fn generate_field_decoder_call(field: Field) -> String {
+fn generate_field_decoder_call(
+  message: Message,
+  field: Field,
+  registry: TypeRegistry,
+  file_path: String,
+) -> String {
   let field_num = int.to_string(field.number)
 
   case field.field_type {
-    parser.Optional(inner) -> generate_optional_type_decoder(inner, field_num)
-    parser.Repeated(inner) -> generate_repeated_type_decoder(inner, field_num)
-    _ -> generate_type_decoder(field.field_type, field_num)
+    proto.Optional(inner) -> generate_optional_type_decoder(inner, field_num)
+    proto.Repeated(inner) -> generate_repeated_type_decoder(inner, field_num)
+    _ -> generate_type_decoder(message, field.field_type, field_num, registry, file_path)
   }
 }
 
-fn generate_type_decoder(proto_type: ProtoType, field_num: String) -> String {
+fn generate_type_decoder(
+  message: Message,
+  proto_type: Type,
+  field_num: String,
+  registry: TypeRegistry,
+  file_path: String,
+) -> String {
+  let msg_prefix =
+    types.get_qualified_function_name(message.name, registry, file_path)
+
   case proto_type {
-    parser.String -> "decode.string_with_default(" <> field_num <> ", \"\")"
-    parser.Int32 -> "decode.int32_with_default(" <> field_num <> ", 0)"
-    parser.Int64 -> "decode.int64_with_default(" <> field_num <> ", 0)"
-    parser.UInt32 -> "decode.uint32_with_default(" <> field_num <> ", 0)"
-    parser.UInt64 -> "decode.uint64_with_default(" <> field_num <> ", 0)"
-    parser.SInt32 -> "decode.sint32(" <> field_num <> ")"
-    parser.SInt64 -> "decode.sint64(" <> field_num <> ")"
-    parser.Fixed32 -> "decode.fixed32(" <> field_num <> ")"
-    parser.Fixed64 -> "decode.fixed64(" <> field_num <> ")"
-    parser.SFixed32 -> "decode.sfixed32(" <> field_num <> ")"
-    parser.SFixed64 -> "decode.sfixed64(" <> field_num <> ")"
-    parser.Bool -> "decode.bool_with_default(" <> field_num <> ", False)"
-    parser.Bytes -> "decode.bytes(" <> field_num <> ")"
-    parser.Float -> "decode.float(" <> field_num <> ")"
-    parser.Double -> "decode.double(" <> field_num <> ")"
-    parser.MessageType(name) ->
+    proto.String -> "decode.string_with_default(" <> field_num <> ", \"\")"
+    proto.Int32 -> "decode.int32_with_default(" <> field_num <> ", 0)"
+    proto.Int64 -> "decode.int64_with_default(" <> field_num <> ", 0)"
+    proto.UInt32 -> "decode.uint32_with_default(" <> field_num <> ", 0)"
+    proto.UInt64 -> "decode.uint64_with_default(" <> field_num <> ", 0)"
+    proto.SInt32 -> "decode.sint32(" <> field_num <> ")"
+    proto.SInt64 -> "decode.sint64(" <> field_num <> ")"
+    proto.Fixed32 -> "decode.fixed32(" <> field_num <> ")"
+    proto.Fixed64 -> "decode.fixed64(" <> field_num <> ")"
+    proto.SFixed32 -> "decode.sfixed32(" <> field_num <> ")"
+    proto.SFixed64 -> "decode.sfixed64(" <> field_num <> ")"
+    proto.Bool -> "decode.bool_with_default(" <> field_num <> ", False)"
+    proto.Bytes -> "decode.bytes(" <> field_num <> ")"
+    proto.Float -> "decode.float(" <> field_num <> ")"
+    proto.Double -> "decode.double(" <> field_num <> ")"
+    proto.MessageType(name) ->
       "decode.nested_message("
       <> field_num
       <> ", "
       <> justin.snake_case(flatten_type_name(name))
       <> "_decoder())"
-    parser.EnumType(name) ->
+    proto.EnumType(name) ->
       "decode_"
       <> justin.snake_case(flatten_type_name(name))
       <> "_field("
       <> field_num
       <> ")"
-    parser.Map(_key_type, _value_type) ->
+    proto.Map(_key_type, _value_type) ->
       "decode.repeated_field("
       <> field_num
-      <> ", fn(field) { map_entry_"
+      <> ", fn(field) { "
+      <> msg_prefix
+      <> "_map_entry_"
       <> field_num
       <> "_decoder()(field) })"
     _ -> "decode.fail(\"Unsupported type\")"
   }
 }
 
-fn generate_optional_type_decoder(
-  inner_type: ProtoType,
-  field_num: String,
-) -> String {
+fn generate_optional_type_decoder(inner_type: Type, field_num: String) -> String {
+  // decode.optional_field and decode.optional_nested_message return Result(a, Nil)
+  // but we need option.Option(a), so we wrap with decode.map and option.from_result
   case inner_type {
-    parser.MessageType(name) ->
-      "decode.optional_nested_message("
+    proto.MessageType(name) ->
+      "decode.map(decode.optional_nested_message("
       <> field_num
       <> ", "
       <> justin.snake_case(flatten_type_name(name))
-      <> "_decoder())"
+      <> "_decoder()), option.from_result)"
     _ ->
-      "decode.optional_field("
+      "decode.map(decode.optional_field("
       <> field_num
       <> ", "
       <> generate_simple_field_decoder_name(inner_type)
-      <> ")"
+      <> "), option.from_result)"
   }
 }
 
-fn generate_repeated_type_decoder(
-  inner_type: ProtoType,
-  field_num: String,
-) -> String {
+fn generate_repeated_type_decoder(inner_type: Type, field_num: String) -> String {
   case inner_type {
-    parser.String -> "decode.repeated_string(" <> field_num <> ")"
-    parser.Int32 -> "decode.repeated_int32(" <> field_num <> ")"
-    parser.EnumType(name) ->
+    proto.String -> "decode.repeated_string(" <> field_num <> ")"
+    proto.Int32 -> "decode.repeated_int32(" <> field_num <> ")"
+    proto.EnumType(name) ->
       "decode_repeated_"
       <> justin.snake_case(flatten_type_name(name))
       <> "("
@@ -404,18 +526,18 @@ fn generate_repeated_type_decoder(
   }
 }
 
-fn generate_simple_type_decoder(proto_type: ProtoType) -> String {
+fn generate_simple_type_decoder(proto_type: Type) -> String {
   case proto_type {
-    parser.String -> "decode.string_field(field)"
-    parser.Int32 -> "decode.int32_field(field)"
-    parser.Int64 -> "decode.int64_field(field)"
-    parser.UInt32 -> "decode.uint32_field(field)"
-    parser.UInt64 -> "decode.uint64_field(field)"
-    parser.Bool -> "decode.bool_field(field)"
-    parser.Bytes -> "decode.bytes_field(field)"
-    parser.Float -> "decode.float_field(field)"
-    parser.Double -> "decode.double_field(field)"
-    parser.MessageType(name) ->
+    proto.String -> "decode.string_field(field)"
+    proto.Int32 -> "decode.int32_field(field)"
+    proto.Int64 -> "decode.int64_field(field)"
+    proto.UInt32 -> "decode.uint32_field(field)"
+    proto.UInt64 -> "decode.uint64_field(field)"
+    proto.Bool -> "decode.bool_field(field)"
+    proto.Bytes -> "decode.bytes_field(field)"
+    proto.Float -> "decode.float_field(field)"
+    proto.Double -> "decode.double_field(field)"
+    proto.MessageType(name) ->
       "decode.message_field(_, "
       <> justin.snake_case(flatten_type_name(name))
       <> "_decoder())(field)"
@@ -424,23 +546,26 @@ fn generate_simple_type_decoder(proto_type: ProtoType) -> String {
   }
 }
 
-fn generate_simple_field_decoder_name(proto_type: ProtoType) -> String {
+fn generate_simple_field_decoder_name(proto_type: Type) -> String {
   case proto_type {
-    parser.String -> "decode.string_field"
-    parser.Int32 -> "decode.int32_field"
-    parser.Int64 -> "decode.int64_field"
-    parser.UInt32 -> "decode.uint32_field"
-    parser.UInt64 -> "decode.uint64_field"
-    parser.Bool -> "decode.bool_field"
-    parser.Bytes -> "decode.bytes_field"
-    parser.Float -> "decode.float_field"
-    parser.Double -> "decode.double_field"
+    proto.String -> "decode.string_field"
+    proto.Int32 -> "decode.int32_field"
+    proto.Int64 -> "decode.int64_field"
+    proto.UInt32 -> "decode.uint32_field"
+    proto.UInt64 -> "decode.uint64_field"
+    proto.Bool -> "decode.bool_field"
+    proto.Bytes -> "decode.bytes_field"
+    proto.Float -> "decode.float_field"
+    proto.Double -> "decode.double_field"
     _ ->
       "fn(_field) { Error(decode.DecodeError(expected: \"supported field type\", found: \"unsupported field type\", path: [])) }"
   }
 }
 
-fn generate_constructor_call(message: Message) -> String {
+fn generate_constructor_call(
+  message: Message,
+  qualified_type_name: String,
+) -> String {
   let field_names =
     message.fields
     |> list.map(fn(field) {
@@ -458,21 +583,22 @@ fn generate_constructor_call(message: Message) -> String {
   let all_names = list.append(field_names, oneof_names)
 
   case all_names {
-    [] -> "  decode.success(" <> message.name <> ")"
-    [single] -> "  decode.success(" <> message.name <> "(" <> single <> "))"
+    [] -> "  decode.success(" <> qualified_type_name <> ")"
+    [single] ->
+      "  decode.success(" <> qualified_type_name <> "(" <> single <> "))"
     _ -> {
       case list.length(all_names) > 4 {
         True -> {
           let names_str = string.join(all_names, ",\n    ")
           "  decode.success("
-          <> message.name
+          <> qualified_type_name
           <> "(\n    "
           <> names_str
           <> ",\n  ))"
         }
         False -> {
           let names_str = string.join(all_names, ", ")
-          "  decode.success(" <> message.name <> "(" <> names_str <> "))"
+          "  decode.success(" <> qualified_type_name <> "(" <> names_str <> "))"
         }
       }
     }
@@ -490,24 +616,32 @@ fn generate_wrapper_function_body(
 
 fn collect_all_messages_flattened(messages: List(Message)) -> List(Message) {
   list.fold(messages, [], fn(acc, msg) {
-    let nested =
-      collect_nested_messages_flattened(msg.nested_messages, msg.name)
-    [msg, ..list.append(nested, acc)]
+    // Recursively flatten nested messages (updating message names only, not field types)
+    // Field type resolution is handled separately by resolve_message_types using the registry
+    let flattened_nested =
+      flatten_nested_messages_simple(msg.nested_messages, msg.name)
+
+    [msg, ..list.append(flattened_nested, acc)]
   })
 }
 
-fn collect_nested_messages_flattened(
+/// Flatten nested messages by prepending parent name to message name
+/// Does NOT modify field types - that's handled by resolve_message_types
+fn flatten_nested_messages_simple(
   nested_messages: List(Message),
   parent_name: String,
 ) -> List(Message) {
   list.fold(nested_messages, [], fn(acc, nested_msg) {
     let flattened_name = parent_name <> nested_msg.name
-    let flattened_msg = parser.Message(..nested_msg, name: flattened_name)
+
+    // Create the flattened message
+    let flattened_msg = proto.Message(..nested_msg, name: flattened_name)
+
+    // Recursively handle deeper nesting
     let deeper_nested =
-      collect_nested_messages_flattened(
-        nested_msg.nested_messages,
-        flattened_name,
-      )
+      flatten_nested_messages_simple(nested_msg.nested_messages, flattened_name)
+
     [flattened_msg, ..list.append(deeper_nested, acc)]
   })
 }
+

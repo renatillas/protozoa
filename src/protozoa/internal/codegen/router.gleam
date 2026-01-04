@@ -17,7 +17,25 @@ import gleam/option.{None, Some}
 import gleam/regexp
 import gleam/string
 import justin
-import protozoa/parser.{type Message, type Method, type Service}
+import protozoa/internal/codegen/types
+import protozoa/internal/type_registry.{type TypeRegistry}
+import protozoa/parser/proto.{type Message, type Method, type Service}
+
+pub type NeededHelpers {
+  NeededHelpers(
+    path_extraction: Bool,
+    path_string: Bool,
+    path_int: Bool,
+    query_string: Bool,
+    query_int: Bool,
+    query_bool: Bool,
+    query_float: Bool,
+    query_list_string: Bool,
+    query_list_int: Bool,
+    query_optional_string: Bool,
+    query_optional_int: Bool,
+  )
+}
 
 /// Extract path parameter names from a URL pattern
 /// Example: "/v1/temperatures/{id}" -> ["id"]
@@ -38,6 +56,8 @@ fn extract_path_params(path: String) -> List(String) {
 pub fn generate_service_router_without_helpers(
   service: Service,
   messages: List(Message),
+  registry: TypeRegistry,
+  file_path: String,
 ) -> String {
   case service.methods {
     [] -> ""
@@ -45,21 +65,29 @@ pub fn generate_service_router_without_helpers(
       // Generate Layer 1: Core service functions (BitArray -> Result)
       let service_functions =
         list.map(methods, fn(method) {
-          generate_service_function(method, service.name)
+          generate_service_function(method, service.name, registry, file_path)
         })
         |> string.join("\n\n")
 
       // Generate Layer 2: HTTP adapter functions (gleam/http types)
       let http_adapters =
         list.filter(methods, has_http_annotation)
-        |> list.map(fn(method) { generate_http_adapter(method, service.name) })
+        |> list.map(fn(method) {
+          generate_http_adapter(method, service.name, registry, file_path)
+        })
         |> string.join("\n\n")
 
       // Generate error type
       let service_error_type = generate_service_error_type(service)
 
       // Generate query parameter helpers only for GET/DELETE methods
-      let query_helpers = generate_query_helpers_for_service(service, messages)
+      let query_helpers =
+        generate_query_helpers_for_service(
+          service,
+          messages,
+          registry,
+          file_path,
+        )
 
       string.join(
         [
@@ -89,6 +117,8 @@ pub fn generate_service_router_without_helpers(
 pub fn generate_service_router(
   service: Service,
   messages: List(Message),
+  registry: TypeRegistry,
+  file_path: String,
 ) -> String {
   case service.methods {
     [] -> ""
@@ -96,14 +126,16 @@ pub fn generate_service_router(
       // Generate Layer 1: Core service functions (BitArray -> Result)
       let service_functions =
         list.map(methods, fn(method) {
-          generate_service_function(method, service.name)
+          generate_service_function(method, service.name, registry, file_path)
         })
         |> string.join("\n\n")
 
       // Generate Layer 2: HTTP adapter functions (gleam/http types)
       let http_adapters =
         list.filter(methods, has_http_annotation)
-        |> list.map(fn(method) { generate_http_adapter(method, service.name) })
+        |> list.map(fn(method) {
+          generate_http_adapter(method, service.name, registry, file_path)
+        })
         |> string.join("\n\n")
 
       // Generate error type
@@ -111,7 +143,13 @@ pub fn generate_service_router(
 
       // Generate query parameter helpers only for GET/DELETE methods
       let needed_helpers = analyze_needed_helpers(service, messages)
-      let query_helpers = generate_query_helpers_for_service(service, messages)
+      let query_helpers =
+        generate_query_helpers_for_service(
+          service,
+          messages,
+          registry,
+          file_path,
+        )
       let query_param_helpers =
         generate_query_param_helpers_conditional(needed_helpers)
 
@@ -151,16 +189,30 @@ fn has_http_annotation(method: Method) -> Bool {
 
 /// Generate Layer 1: Core service function (transport-agnostic)
 /// This function handles protobuf encoding/decoding
-fn generate_service_function(method: Method, service_name: String) -> String {
+fn generate_service_function(
+  method: Method,
+  service_name: String,
+  registry: TypeRegistry,
+  file_path: String,
+) -> String {
   let function_name = justin.snake_case(method.name) <> "_service"
-  let request_type = method.input_type
-  let response_type = method.output_type
+
+  // Get qualified type names
+  let request_type_qualified =
+    types.get_qualified_type_name(method.input_type, registry, file_path)
+  let response_type_qualified =
+    types.get_qualified_type_name(method.output_type, registry, file_path)
+  let request_fn_qualified =
+    types.get_qualified_function_name(method.input_type, registry, file_path)
+  let response_fn_qualified =
+    types.get_qualified_function_name(method.output_type, registry, file_path)
+
   let handler_error_type = justin.pascal_case(service_name) <> "Error"
   let service_error_type = justin.pascal_case(service_name) <> "RequestError"
   let prefix = justin.pascal_case(service_name)
 
-  let decoder_name = justin.snake_case(request_type) <> "_decoder()"
-  let encoder_name = "encode_" <> justin.snake_case(response_type)
+  let decoder_name = request_fn_qualified <> "_decoder()"
+  let encoder_name = "encode_" <> response_fn_qualified
 
   string.join(
     [
@@ -169,9 +221,9 @@ fn generate_service_function(method: Method, service_name: String) -> String {
       "pub fn " <> function_name <> "(",
       "  request_bytes: BitArray,",
       "  handler: fn("
-        <> request_type
+        <> request_type_qualified
         <> ") -> Result("
-        <> response_type
+        <> response_type_qualified
         <> ", "
         <> handler_error_type
         <> "),",
@@ -186,7 +238,7 @@ fn generate_service_function(method: Method, service_name: String) -> String {
       "    Error(_) -> Error("
         <> prefix
         <> "DecodeError(\"Failed to decode "
-        <> request_type
+        <> request_type_qualified
         <> "\"))",
       "  }",
       "}",
@@ -197,29 +249,42 @@ fn generate_service_function(method: Method, service_name: String) -> String {
 
 /// Generate Layer 2: HTTP adapter function
 /// This function uses gleam/http types and is server-agnostic
-fn generate_http_adapter(method: Method, service_name: String) -> String {
+fn generate_http_adapter(
+  method: Method,
+  service_name: String,
+  registry: TypeRegistry,
+  file_path: String,
+) -> String {
   case method.http_method, method.http_path {
     Some(http_method), Some(path) -> {
       let function_name = "http_" <> justin.snake_case(method.name)
       let service_function_name = justin.snake_case(method.name) <> "_service"
-      let request_type = method.input_type
-      let response_type = method.output_type
+
+      // Get qualified type names
+      let request_type_qualified =
+        types.get_qualified_type_name(method.input_type, registry, file_path)
+      let response_type_qualified =
+        types.get_qualified_type_name(method.output_type, registry, file_path)
+      let request_fn_qualified =
+        types.get_qualified_function_name(method.input_type, registry, file_path)
+
       let handler_error_type = justin.pascal_case(service_name) <> "Error"
-      let service_error_type = justin.pascal_case(service_name) <> "RequestError"
+      let service_error_type =
+        justin.pascal_case(service_name) <> "RequestError"
       let prefix = justin.pascal_case(service_name)
 
       let http_method_str = case http_method {
-        parser.Get -> "GET"
-        parser.Post -> "POST"
-        parser.Put -> "PUT"
-        parser.Delete -> "DELETE"
-        parser.Patch -> "PATCH"
+        proto.Get -> "GET"
+        proto.Post -> "POST"
+        proto.Put -> "PUT"
+        proto.Delete -> "DELETE"
+        proto.Patch -> "PATCH"
       }
 
       // Determine if this method should read from body or query params
       let reads_from_body = case http_method {
-        parser.Post | parser.Put | parser.Patch -> True
-        parser.Get | parser.Delete -> False
+        proto.Post | proto.Put | proto.Patch -> True
+        proto.Get | proto.Delete -> False
       }
 
       let request_processing = case reads_from_body {
@@ -249,7 +314,7 @@ fn generate_http_adapter(method: Method, service_name: String) -> String {
               "    Ok(proto_request) -> {",
               "      // Encode the request to bytes for the service function",
               "      let request_bytes = encode_"
-                <> justin.snake_case(request_type)
+                <> request_fn_qualified
                 <> "(proto_request)",
               "      case "
                 <> service_function_name
@@ -282,13 +347,15 @@ fn generate_http_adapter(method: Method, service_name: String) -> String {
           "pub fn " <> function_name <> "(",
           "  req: request.Request(BitArray),",
           "  handler: fn("
-            <> request_type
+            <> request_type_qualified
             <> ") -> Result("
-            <> response_type
+            <> response_type_qualified
             <> ", "
             <> handler_error_type
             <> "),",
-          ") -> Result(response.Response(BitArray), " <> service_error_type <> ") {",
+          ") -> Result(response.Response(BitArray), "
+            <> service_error_type
+            <> ") {",
           request_processing,
           "}",
         ],
@@ -394,13 +461,15 @@ pub fn generate_error_converter(service: Service) -> String {
 pub fn generate_query_helpers_for_service(
   service: Service,
   messages: List(Message),
+  registry: TypeRegistry,
+  file_path: String,
 ) -> String {
   // Find all GET/DELETE methods that need query parameter mapping
   let query_methods =
     service.methods
     |> list.filter(fn(method) {
       case method.http_method {
-        Some(parser.Get) | Some(parser.Delete) -> True
+        Some(proto.Get) | Some(proto.Delete) -> True
         _ -> False
       }
     })
@@ -410,7 +479,7 @@ pub fn generate_query_helpers_for_service(
     methods -> {
       let mappers =
         list.map(methods, fn(method) {
-          generate_query_mapper_for_method(method, messages)
+          generate_query_mapper_for_method(method, messages, registry, file_path)
         })
       string.join(mappers, "\n\n")
     }
@@ -421,10 +490,18 @@ pub fn generate_query_helpers_for_service(
 fn generate_query_mapper_for_method(
   method: Method,
   messages: List(Message),
+  registry: TypeRegistry,
+  file_path: String,
 ) -> String {
   let function_name =
     "format_query_request_for_" <> justin.snake_case(method.name)
   let message_type = method.input_type
+
+  // Get qualified type names
+  let message_type_qualified =
+    types.get_qualified_type_name(message_type, registry, file_path)
+  let message_fn_qualified =
+    types.get_qualified_function_name(message_type, registry, file_path)
 
   // Extract path parameters from the HTTP path
   let path_params = case method.http_path {
@@ -490,11 +567,11 @@ fn generate_query_mapper_for_method(
 
           string.join(
             [
-              "/// Map query parameters to " <> message_type,
+              "/// Map query parameters to " <> message_type_qualified,
               "fn "
                 <> function_name
                 <> "(req: request.Request(BitArray)) -> Result("
-                <> message_type
+                <> message_type_qualified
                 <> ", Nil) {",
               "  // Extract path parameters from request path",
               "  let path_params = extract_path_params_from_request(req.path, \""
@@ -506,7 +583,7 @@ fn generate_query_mapper_for_method(
               "      " <> field_mappings,
               "      ",
               "      Ok("
-                <> message_type
+                <> message_type_qualified
                 <> "("
                 <> field_constructor_args
                 <> "))",
@@ -514,7 +591,7 @@ fn generate_query_mapper_for_method(
               "    Error(_) -> {",
               "      // No query params, create message with defaults",
               "      case decode.run(<<>>, with: "
-                <> justin.snake_case(message_type)
+                <> message_fn_qualified
                 <> "_decoder()) {",
               "        Ok(msg) -> Ok(msg)",
               "        Error(_) -> Error(Nil)",
@@ -530,11 +607,11 @@ fn generate_query_mapper_for_method(
           // Original query-param-only version
           string.join(
             [
-              "/// Map query parameters to " <> message_type,
+              "/// Map query parameters to " <> message_type_qualified,
               "fn "
                 <> function_name
                 <> "(req: request.Request(BitArray)) -> Result("
-                <> message_type
+                <> message_type_qualified
                 <> ", Nil) {",
               "  case request.get_query(req) {",
               "    Ok(" <> params_var <> ") -> {",
@@ -542,7 +619,7 @@ fn generate_query_mapper_for_method(
               "      " <> field_mappings,
               "      ",
               "      Ok("
-                <> message_type
+                <> message_type_qualified
                 <> "("
                 <> field_constructor_args
                 <> "))",
@@ -550,7 +627,7 @@ fn generate_query_mapper_for_method(
               "    Error(_) -> {",
               "      // No query params, create message with defaults",
               "      case decode.run(<<>>, with: "
-                <> justin.snake_case(message_type)
+                <> message_fn_qualified
                 <> "_decoder()) {",
               "        Ok(msg) -> Ok(msg)",
               "        Error(_) -> Error(Nil)",
@@ -572,11 +649,11 @@ fn generate_query_mapper_for_method(
           "fn format_query_request_for_"
             <> justin.snake_case(method.name)
             <> "(req: request.Request(BitArray)) -> Result("
-            <> message_type
+            <> message_type_qualified
             <> ", Nil) {",
           "  // Message definition not found, using default decoder",
           "  case decode.run(<<>>, with: "
-            <> justin.snake_case(message_type)
+            <> message_fn_qualified
             <> "_decoder()) {",
           "    Ok(msg) -> Ok(msg)",
           "    Error(_) -> Error(Nil)",
@@ -590,28 +667,28 @@ fn generate_query_mapper_for_method(
 }
 
 /// Generate path parameter extraction for a single field
-fn generate_field_path_mapping(field: parser.Field) -> String {
+fn generate_field_path_mapping(field: proto.Field) -> String {
   let field_name = justin.snake_case(field.name)
   let param_name = string.lowercase(field.name)
 
   case field.field_type {
-    parser.String ->
+    proto.String ->
       "let "
       <> field_name
       <> " = get_path_param_string(path_params, \""
       <> param_name
       <> "\", \"\")"
 
-    parser.Int32
-    | parser.Int64
-    | parser.UInt32
-    | parser.UInt64
-    | parser.SInt32
-    | parser.SInt64
-    | parser.Fixed32
-    | parser.Fixed64
-    | parser.SFixed32
-    | parser.SFixed64 ->
+    proto.Int32
+    | proto.Int64
+    | proto.UInt32
+    | proto.UInt64
+    | proto.SInt32
+    | proto.SInt64
+    | proto.Fixed32
+    | proto.Fixed64
+    | proto.SFixed32
+    | proto.SFixed64 ->
       "let "
       <> field_name
       <> " = get_path_param_int(path_params, \""
@@ -628,67 +705,67 @@ fn generate_field_path_mapping(field: parser.Field) -> String {
 }
 
 /// Generate query parameter extraction for a single field
-fn generate_field_query_mapping(field: parser.Field) -> String {
+fn generate_field_query_mapping(field: proto.Field) -> String {
   let field_name = justin.snake_case(field.name)
   let param_name = field.name
 
   case field.field_type {
-    parser.String ->
+    proto.String ->
       "let "
       <> field_name
       <> " = get_query_param_string(params, \""
       <> param_name
       <> "\", \"\")"
 
-    parser.Int32
-    | parser.Int64
-    | parser.UInt32
-    | parser.UInt64
-    | parser.SInt32
-    | parser.SInt64
-    | parser.Fixed32
-    | parser.Fixed64
-    | parser.SFixed32
-    | parser.SFixed64 ->
+    proto.Int32
+    | proto.Int64
+    | proto.UInt32
+    | proto.UInt64
+    | proto.SInt32
+    | proto.SInt64
+    | proto.Fixed32
+    | proto.Fixed64
+    | proto.SFixed32
+    | proto.SFixed64 ->
       "let "
       <> field_name
       <> " = get_query_param_int(params, \""
       <> param_name
       <> "\", 0)"
 
-    parser.Bool ->
+    proto.Bool ->
       "let "
       <> field_name
       <> " = get_query_param_bool(params, \""
       <> param_name
       <> "\", False)"
 
-    parser.Float | parser.Double ->
+    proto.Float | proto.Double ->
       "let "
       <> field_name
       <> " = get_query_param_float(params, \""
       <> param_name
       <> "\", 0.0)"
 
-    parser.Repeated(inner_type) -> {
+    proto.Repeated(inner_type) -> {
       // For repeated fields, collect all values with the same param name
       case inner_type {
-        parser.String ->
+        proto.String ->
           "let "
           <> field_name
           <> " = get_query_param_list_string(params, \""
           <> param_name
           <> "\")"
-        parser.Int32
-        | parser.Int64
-        | parser.UInt32
-        | parser.UInt64
-        | parser.SInt32
-        | parser.SInt64
-        | parser.Fixed32
-        | parser.Fixed64
-        | parser.SFixed32
-        | parser.SFixed64 ->
+        proto.Int32
+        | proto.Int64
+        | proto.UInt32
+        | proto.UInt64
+        | proto.SInt32
+        | proto.SInt64
+        | proto.Fixed32
+        | proto.Fixed64
+        | proto.SFixed32
+        | proto.SFixed64 ->
           "let "
           <> field_name
           <> " = get_query_param_list_int(params, \""
@@ -701,24 +778,24 @@ fn generate_field_query_mapping(field: parser.Field) -> String {
       }
     }
 
-    parser.Optional(inner_type) -> {
+    proto.Optional(inner_type) -> {
       case inner_type {
-        parser.String ->
+        proto.String ->
           "let "
           <> field_name
           <> " = get_query_param_optional_string(params, \""
           <> param_name
           <> "\")"
-        parser.Int32
-        | parser.Int64
-        | parser.UInt32
-        | parser.UInt64
-        | parser.SInt32
-        | parser.SInt64
-        | parser.Fixed32
-        | parser.Fixed64
-        | parser.SFixed32
-        | parser.SFixed64 ->
+        proto.Int32
+        | proto.Int64
+        | proto.UInt32
+        | proto.UInt64
+        | proto.SInt32
+        | proto.SInt64
+        | proto.Fixed32
+        | proto.Fixed64
+        | proto.SFixed32
+        | proto.SFixed64 ->
           "let "
           <> field_name
           <> " = get_query_param_optional_int(params, \""
@@ -731,22 +808,22 @@ fn generate_field_query_mapping(field: parser.Field) -> String {
       }
     }
 
-    parser.Bytes ->
+    proto.Bytes ->
       "let "
       <> field_name
       <> " = <<>>  // Bytes not supported in query params, using empty"
 
-    parser.MessageType(_) ->
+    proto.MessageType(_) ->
       "let "
       <> field_name
       <> " = todo as \"Message types require nested object handling\""
 
-    parser.EnumType(_) ->
+    proto.EnumType(_) ->
       "let "
       <> field_name
       <> " = 0  // Enum not supported in query params, using default"
 
-    parser.Map(_, _) ->
+    proto.Map(_, _) ->
       "let "
       <> field_name
       <> " = dict.new()  // Maps not supported in query params"
@@ -754,22 +831,6 @@ fn generate_field_query_mapping(field: parser.Field) -> String {
 }
 
 /// Type to track which helper functions are needed
-pub type NeededHelpers {
-  NeededHelpers(
-    path_extraction: Bool,
-    path_string: Bool,
-    path_int: Bool,
-    query_string: Bool,
-    query_int: Bool,
-    query_bool: Bool,
-    query_float: Bool,
-    query_list_string: Bool,
-    query_list_int: Bool,
-    query_optional_string: Bool,
-    query_optional_int: Bool,
-  )
-}
-
 /// Merge two NeededHelpers by OR-ing all fields
 pub fn merge_needed_helpers(a: NeededHelpers, b: NeededHelpers) -> NeededHelpers {
   NeededHelpers(
@@ -811,7 +872,7 @@ pub fn analyze_needed_helpers(
   // Analyze each method that uses GET/DELETE (query/path params)
   list.fold(service.methods, initial, fn(acc, method) {
     case method.http_method {
-      Some(parser.Get) | Some(parser.Delete) -> {
+      Some(proto.Get) | Some(proto.Delete) -> {
         // Find the request message
         case list.find(messages, fn(msg) { msg.name == method.input_type }) {
           Ok(message) -> {
@@ -851,23 +912,23 @@ pub fn analyze_needed_helpers(
 
 /// Analyze a path parameter field type and update needed helpers
 fn analyze_path_param_type(
-  field_type: parser.ProtoType,
+  field_type: proto.Type,
   acc: NeededHelpers,
   has_path_params: Bool,
 ) -> NeededHelpers {
   case field_type {
-    parser.String ->
+    proto.String ->
       NeededHelpers(..acc, path_extraction: has_path_params, path_string: True)
-    parser.Int32
-    | parser.Int64
-    | parser.UInt32
-    | parser.UInt64
-    | parser.SInt32
-    | parser.SInt64
-    | parser.Fixed32
-    | parser.Fixed64
-    | parser.SFixed32
-    | parser.SFixed64 ->
+    proto.Int32
+    | proto.Int64
+    | proto.UInt32
+    | proto.UInt64
+    | proto.SInt32
+    | proto.SInt64
+    | proto.Fixed32
+    | proto.Fixed64
+    | proto.SFixed32
+    | proto.SFixed64 ->
       NeededHelpers(..acc, path_extraction: has_path_params, path_int: True)
     _ -> NeededHelpers(..acc, path_extraction: has_path_params)
   }
@@ -875,52 +936,52 @@ fn analyze_path_param_type(
 
 /// Analyze a query parameter field type and update needed helpers
 fn analyze_query_param_type(
-  field_type: parser.ProtoType,
+  field_type: proto.Type,
   acc: NeededHelpers,
 ) -> NeededHelpers {
   case field_type {
-    parser.String -> NeededHelpers(..acc, query_string: True)
-    parser.Int32
-    | parser.Int64
-    | parser.UInt32
-    | parser.UInt64
-    | parser.SInt32
-    | parser.SInt64
-    | parser.Fixed32
-    | parser.Fixed64
-    | parser.SFixed32
-    | parser.SFixed64 -> NeededHelpers(..acc, query_int: True)
-    parser.Bool -> NeededHelpers(..acc, query_bool: True)
-    parser.Float | parser.Double -> NeededHelpers(..acc, query_float: True)
-    parser.Repeated(inner_type) -> {
+    proto.String -> NeededHelpers(..acc, query_string: True)
+    proto.Int32
+    | proto.Int64
+    | proto.UInt32
+    | proto.UInt64
+    | proto.SInt32
+    | proto.SInt64
+    | proto.Fixed32
+    | proto.Fixed64
+    | proto.SFixed32
+    | proto.SFixed64 -> NeededHelpers(..acc, query_int: True)
+    proto.Bool -> NeededHelpers(..acc, query_bool: True)
+    proto.Float | proto.Double -> NeededHelpers(..acc, query_float: True)
+    proto.Repeated(inner_type) -> {
       case inner_type {
-        parser.String -> NeededHelpers(..acc, query_list_string: True)
-        parser.Int32
-        | parser.Int64
-        | parser.UInt32
-        | parser.UInt64
-        | parser.SInt32
-        | parser.SInt64
-        | parser.Fixed32
-        | parser.Fixed64
-        | parser.SFixed32
-        | parser.SFixed64 -> NeededHelpers(..acc, query_list_int: True)
+        proto.String -> NeededHelpers(..acc, query_list_string: True)
+        proto.Int32
+        | proto.Int64
+        | proto.UInt32
+        | proto.UInt64
+        | proto.SInt32
+        | proto.SInt64
+        | proto.Fixed32
+        | proto.Fixed64
+        | proto.SFixed32
+        | proto.SFixed64 -> NeededHelpers(..acc, query_list_int: True)
         _ -> acc
       }
     }
-    parser.Optional(inner_type) -> {
+    proto.Optional(inner_type) -> {
       case inner_type {
-        parser.String -> NeededHelpers(..acc, query_optional_string: True)
-        parser.Int32
-        | parser.Int64
-        | parser.UInt32
-        | parser.UInt64
-        | parser.SInt32
-        | parser.SInt64
-        | parser.Fixed32
-        | parser.Fixed64
-        | parser.SFixed32
-        | parser.SFixed64 -> NeededHelpers(..acc, query_optional_int: True)
+        proto.String -> NeededHelpers(..acc, query_optional_string: True)
+        proto.Int32
+        | proto.Int64
+        | proto.UInt32
+        | proto.UInt64
+        | proto.SInt32
+        | proto.SInt64
+        | proto.Fixed32
+        | proto.Fixed64
+        | proto.SFixed32
+        | proto.SFixed64 -> NeededHelpers(..acc, query_optional_int: True)
         _ -> acc
       }
     }
@@ -1235,186 +1296,4 @@ pub fn generate_query_param_helpers_conditional(needed: NeededHelpers) -> String
     [] -> ""
     _ -> string.join(list.reverse(helpers), "\n\n")
   }
-}
-
-/// Generate path and query parameter helper functions (deprecated - use conditional version)
-fn generate_query_param_helpers() -> String {
-  string.join(
-    [
-      "/// Extract path parameters from request path based on pattern",
-      "/// Example: extract_path_params_from_request(\"/v1/temperatures/123\", \"/v1/temperatures/{id}\")",
-      "///   returns [(\"id\", \"123\")]",
-      "fn extract_path_params_from_request(path: String, pattern: String) -> List(#(String, String)) {",
-      "  let path_segments = string.split(path, \"/\") |> list.filter(fn(s) { s != \"\" })",
-      "  let pattern_segments = string.split(pattern, \"/\") |> list.filter(fn(s) { s != \"\" })",
-      "  extract_params_from_segments(path_segments, pattern_segments, [])",
-      "}",
-      "",
-      "/// Helper to extract parameters by matching path segments with pattern segments",
-      "fn extract_params_from_segments(",
-      "  path_segments: List(String),",
-      "  pattern_segments: List(String),",
-      "  acc: List(#(String, String)),",
-      ") -> List(#(String, String)) {",
-      "  case path_segments, pattern_segments {",
-      "    [], _ -> list.reverse(acc)",
-      "    _, [] -> list.reverse(acc)",
-      "    [path_seg, ..path_rest], [pattern_seg, ..pattern_rest] -> {",
-      "      case string.starts_with(pattern_seg, \"{\") && string.ends_with(pattern_seg, \"}\") {",
-      "        True -> {",
-      "          // This is a path parameter",
-      "          let param_name = string.slice(pattern_seg, 1, string.length(pattern_seg) - 2) |> string.lowercase",
-      "          extract_params_from_segments(path_rest, pattern_rest, [#(param_name, path_seg), ..acc])",
-      "        }",
-      "        False -> {",
-      "          // This is a literal segment, skip",
-      "          extract_params_from_segments(path_rest, pattern_rest, acc)",
-      "        }",
-      "      }",
-      "    }",
-      "  }",
-      "}",
-      "",
-      "/// Get path parameter as string with default",
-      "fn get_path_param_string(",
-      "  params: List(#(String, String)),",
-      "  key: String,",
-      "  default: String,",
-      ") -> String {",
-      "  case list.find(params, fn(p) { p.0 == key }) {",
-      "    Ok(#(_, value)) -> value",
-      "    Error(_) -> default",
-      "  }",
-      "}",
-      "",
-      "/// Get path parameter as int with default",
-      "fn get_path_param_int(",
-      "  params: List(#(String, String)),",
-      "  key: String,",
-      "  default: Int,",
-      ") -> Int {",
-      "  case list.find(params, fn(p) { p.0 == key }) {",
-      "    Ok(#(_, value)) -> {",
-      "      case int.parse(value) {",
-      "        Ok(i) -> i",
-      "        Error(_) -> default",
-      "      }",
-      "    }",
-      "    Error(_) -> default",
-      "  }",
-      "}",
-      "",
-      "/// Get string query parameter with default",
-      "fn get_query_param_string(",
-      "  params: List(#(String, String)),",
-      "  key: String,",
-      "  default: String,",
-      ") -> String {",
-      "  case list.find(params, fn(p) { p.0 == key }) {",
-      "    Ok(#(_, value)) -> value",
-      "    Error(_) -> default",
-      "  }",
-      "}",
-      "",
-      "/// Get int query parameter with default",
-      "fn get_query_param_int(",
-      "  params: List(#(String, String)),",
-      "  key: String,",
-      "  default: Int,",
-      ") -> Int {",
-      "  case list.find(params, fn(p) { p.0 == key }) {",
-      "    Ok(#(_, value)) -> {",
-      "      case int.parse(value) {",
-      "        Ok(i) -> i",
-      "        Error(_) -> default",
-      "      }",
-      "    }",
-      "    Error(_) -> default",
-      "  }",
-      "}",
-      "",
-      "/// Get bool query parameter with default",
-      "fn get_query_param_bool(",
-      "  params: List(#(String, String)),",
-      "  key: String,",
-      "  default: Bool,",
-      ") -> Bool {",
-      "  case list.find(params, fn(p) { p.0 == key }) {",
-      "    Ok(#(_, value)) -> {",
-      "      case string.lowercase(value) {",
-      "        \"true\" | \"1\" | \"yes\" -> True",
-      "        \"false\" | \"0\" | \"no\" -> False",
-      "        _ -> default",
-      "      }",
-      "    }",
-      "    Error(_) -> default",
-      "  }",
-      "}",
-      "",
-      "/// Get float query parameter with default",
-      "fn get_query_param_float(",
-      "  params: List(#(String, String)),",
-      "  key: String,",
-      "  default: Float,",
-      ") -> Float {",
-      "  case list.find(params, fn(p) { p.0 == key }) {",
-      "    Ok(#(_, value)) -> {",
-      "      case float.parse(value) {",
-      "        Ok(f) -> f",
-      "        Error(_) -> default",
-      "      }",
-      "    }",
-      "    Error(_) -> default",
-      "  }",
-      "}",
-      "",
-      "/// Get list of string query parameters",
-      "fn get_query_param_list_string(",
-      "  params: List(#(String, String)),",
-      "  key: String,",
-      ") -> List(String) {",
-      "  params",
-      "  |> list.filter(fn(p) { p.0 == key })",
-      "  |> list.map(fn(p) { p.1 })",
-      "}",
-      "",
-      "/// Get list of int query parameters",
-      "fn get_query_param_list_int(",
-      "  params: List(#(String, String)),",
-      "  key: String,",
-      ") -> List(Int) {",
-      "  params",
-      "  |> list.filter(fn(p) { p.0 == key })",
-      "  |> list.filter_map(fn(p) { int.parse(p.1) })",
-      "}",
-      "",
-      "/// Get optional string query parameter",
-      "fn get_query_param_optional_string(",
-      "  params: List(#(String, String)),",
-      "  key: String,",
-      ") -> option.Option(String) {",
-      "  case list.find(params, fn(p) { p.0 == key }) {",
-      "    Ok(#(_, value)) -> option.Some(value)",
-      "    Error(_) -> option.None",
-      "  }",
-      "}",
-      "",
-      "/// Get optional int query parameter",
-      "fn get_query_param_optional_int(",
-      "  params: List(#(String, String)),",
-      "  key: String,",
-      ") -> option.Option(Int) {",
-      "  case list.find(params, fn(p) { p.0 == key }) {",
-      "    Ok(#(_, value)) -> {",
-      "      case int.parse(value) {",
-      "        Ok(i) -> option.Some(i)",
-      "        Error(_) -> option.None",
-      "      }",
-      "    }",
-      "    Error(_) -> option.None",
-      "  }",
-      "}",
-    ],
-    "\n",
-  )
 }

@@ -1,4 +1,10 @@
-syntax = "proto3";
+import gleam/option.{Some}
+import protozoa/parser/file
+import protozoa/parser/proto
+
+pub fn parse_http_annotations_test() {
+  let content =
+    "syntax = \"proto3\";
 
 package test;
 
@@ -7,29 +13,29 @@ service TemperatureService {
   // Get temperature - path param {id} should be extracted from URL
   rpc GetTemperature(TemperatureRequest) returns (TemperatureResponse) {
     option (google.api.http) = {
-      get: "/v1/temperatures/{id}"
+      get: \"/v1/temperatures/{id}\"
     };
   }
 
   // Delete temperature - path param {id} from URL
   rpc DeleteTemperature(DeleteRequest) returns (DeleteResponse) {
     option (google.api.http) = {
-      delete: "/v1/temperatures/{id}"
+      delete: \"/v1/temperatures/{id}\"
     };
   }
 
   // Create temperature - reads from request body
   rpc CreateTemperature(TemperatureRequest) returns (TemperatureResponse) {
     option (google.api.http) = {
-      post: "/v1/temperatures"
-      body: "*"
+      post: \"/v1/temperatures\"
+      body: \"*\"
     };
   }
 
   // List temperatures - query params for pagination
   rpc ListTemperatures(ListRequest) returns (ListResponse) {
     option (google.api.http) = {
-      get: "/v1/temperatures"
+      get: \"/v1/temperatures\"
     };
   }
 }
@@ -64,4 +70,34 @@ message ListRequest {
 message ListResponse {
   repeated TemperatureResponse temperatures = 1;
   int32 total = 2;
+}"
+
+  let assert Ok(parsed_file) = file.parse(content)
+
+  // Check we parsed messages
+  assert parsed_file.messages != []
+
+  // Check we parsed services
+  assert parsed_file.services != []
+
+  // Check the first service
+  let assert [service] = parsed_file.services
+  assert service.name == "TemperatureService"
+
+  // Check methods were parsed
+  assert service.methods != []
+
+  // Check first method has HTTP annotation
+  let assert [first_method, ..] = service.methods
+  assert first_method.name == "GetTemperature"
+
+  // Should have parsed the HTTP method and path from annotation
+  case first_method.http_method, first_method.http_path {
+    Some(proto.Get), Some(path) -> {
+      assert path == "/v1/temperatures/{id}"
+    }
+    _, _ -> {
+      panic as "Expected HTTP method and path to be parsed"
+    }
+  }
 }

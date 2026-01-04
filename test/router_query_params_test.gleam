@@ -1,25 +1,88 @@
 import birdie
 import protozoa/internal/codegen
 import protozoa/internal/type_registry
-import protozoa/parser
-import simplifile
+import protozoa/parser/file
 
 pub fn query_parameter_mapping_test() {
-  // Read the test proto file
-  let assert Ok(proto_content) = simplifile.read("test/test_http_service.proto")
+  let proto_content =
+    "syntax = \"proto3\";
+
+package test;
+
+// Test service with HTTP methods using google.api.http annotations
+service TemperatureService {
+  // Get temperature - path param {id} should be extracted from URL
+  rpc GetTemperature(TemperatureRequest) returns (TemperatureResponse) {
+    option (google.api.http) = {
+      get: \"/v1/temperatures/{id}\"
+    };
+  }
+
+  // Delete temperature - path param {id} from URL
+  rpc DeleteTemperature(DeleteRequest) returns (DeleteResponse) {
+    option (google.api.http) = {
+      delete: \"/v1/temperatures/{id}\"
+    };
+  }
+
+  // Create temperature - reads from request body
+  rpc CreateTemperature(TemperatureRequest) returns (TemperatureResponse) {
+    option (google.api.http) = {
+      post: \"/v1/temperatures\"
+      body: \"*\"
+    };
+  }
+
+  // List temperatures - query params for pagination
+  rpc ListTemperatures(ListRequest) returns (ListResponse) {
+    option (google.api.http) = {
+      get: \"/v1/temperatures\"
+    };
+  }
+}
+
+message TemperatureRequest {
+  int32 id = 1;  // Path parameter for GET
+  int32 celsius = 2;
+  string location = 3;
+  bool use_cache = 4;
+  float precision = 5;
+}
+
+message TemperatureResponse {
+  int32 fahrenheit = 1;
+  string message = 2;
+}
+
+message DeleteRequest {
+  int32 id = 1;
+}
+
+message DeleteResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message ListRequest {
+  int32 limit = 1;
+  int32 offset = 2;
+}
+
+message ListResponse {
+  repeated TemperatureResponse temperatures = 1;
+  int32 total = 2;
+}"
 
   // Parse it
-  let assert Ok(proto_file) = parser.parse(proto_content)
+  let assert Ok(proto_file) = file.parse(proto_content)
 
-  // Generate code
-  let assert Ok([#(_, generated)]) =
-    codegen.generate_combined_proto_file(
-      files: [
-        parser.Path(path: "test/test_http_service.proto", content: proto_file),
-      ],
+  // Generate code using the new pure API
+  let assert Ok(generated) =
+    codegen.generate(
+      files: [file.Path(path: "test_http_service.proto", content: proto_file)],
       registry: type_registry.new(),
-      output_dir: "test/",
     )
+
   generated
   |> birdie.snap(title: "HTTP service with query parameter mapping")
 }
