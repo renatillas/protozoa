@@ -129,29 +129,16 @@ fn generate_file_content_sections(
   file_path: String,
   registry: TypeRegistry,
 ) -> Result(ContentSections, String) {
-  let enum_types =
-    types.generate_enum_types(proto_file.enums, registry, file_path)
-  let message_types =
-    types.generate_types_with_registry(proto_file.messages, registry, file_path)
-  let message_encoders =
-    encoders.generate_encoders(proto_file.messages, registry, file_path)
-  let message_decoders =
-    decoders.generate_decoders(proto_file.messages, registry, file_path)
+  let ctx = types.new_ctx(registry, file_path)
+  let enum_types = types.generate_enum_types(proto_file.enums, ctx)
+  let message_types = types.generate_types(proto_file.messages, ctx)
+  let message_encoders = encoders.generate_encoders(proto_file.messages, ctx)
+  let message_decoders = decoders.generate_decoders(proto_file.messages, ctx)
   let enum_helpers =
-    encoders.generate_enum_helpers_with_nested(
-      proto_file.enums,
-      proto_file.messages,
-      registry,
-      file_path,
-    )
+    encoders.generate_enum_helpers(proto_file.enums, proto_file.messages, ctx)
   let service_stubs = generate_service_stubs(proto_file.services)
   let #(service_routers, helper_functions) =
-    generate_all_service_routers(
-      proto_file.services,
-      proto_file.messages,
-      registry,
-      file_path,
-    )
+    generate_all_service_routers(proto_file.services, proto_file.messages, ctx)
   let service_routers =
     service_routers
     <> case string.is_empty(helper_functions) {
@@ -720,8 +707,7 @@ fn generate_stringvalue_definition() -> String {
 fn generate_all_service_routers(
   services: List(proto.Service),
   messages: List(proto.Message),
-  registry: TypeRegistry,
-  file_path: String,
+  ctx: types.Context,
 ) -> #(String, String) {
   case services {
     [] -> #("", "")
@@ -730,12 +716,7 @@ fn generate_all_service_routers(
       let routers =
         services
         |> list.map(fn(service) {
-          router.generate_service_router_without_helpers(
-            service,
-            messages,
-            registry,
-            file_path,
-          )
+          router.generate_router(service, messages, ctx)
         })
         |> list.filter(fn(s) { !string.is_empty(s) })
         |> string.join("\n\n")

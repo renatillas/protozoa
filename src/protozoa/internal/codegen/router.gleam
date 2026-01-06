@@ -17,8 +17,7 @@ import gleam/option.{None, Some}
 import gleam/regexp
 import gleam/string
 import justin
-import protozoa/internal/codegen/types
-import protozoa/internal/type_registry.{type TypeRegistry}
+import protozoa/internal/codegen/types.{type Context}
 import protozoa/parser/proto.{type Message, type Method, type Service}
 
 pub type NeededHelpers {
@@ -52,12 +51,11 @@ fn extract_path_params(path: String) -> List(String) {
   |> list.filter(fn(s) { s != "" })
 }
 
-/// Generate service code with three layers of abstraction (without helpers)
-pub fn generate_service_router_without_helpers(
+/// Generate service code with three layers of abstraction
+pub fn generate_router(
   service: Service,
   messages: List(Message),
-  registry: TypeRegistry,
-  file_path: String,
+  ctx: Context,
 ) -> String {
   case service.methods {
     [] -> ""
@@ -65,7 +63,7 @@ pub fn generate_service_router_without_helpers(
       // Generate Layer 1: Core service functions (BitArray -> Result)
       let service_functions =
         list.map(methods, fn(method) {
-          generate_service_function(method, service.name, registry, file_path)
+          generate_service_function(method, service.name, ctx)
         })
         |> string.join("\n\n")
 
@@ -73,7 +71,7 @@ pub fn generate_service_router_without_helpers(
       let http_adapters =
         list.filter(methods, has_http_annotation)
         |> list.map(fn(method) {
-          generate_http_adapter(method, service.name, registry, file_path)
+          generate_http_adapter(method, service.name, ctx)
         })
         |> string.join("\n\n")
 
@@ -81,13 +79,7 @@ pub fn generate_service_router_without_helpers(
       let service_error_type = generate_service_error_type(service)
 
       // Generate query parameter helpers only for GET/DELETE methods
-      let query_helpers =
-        generate_query_helpers_for_service(
-          service,
-          messages,
-          registry,
-          file_path,
-        )
+      let query_helpers = query_helpers(service, messages, ctx)
 
       string.join(
         [
@@ -105,72 +97,6 @@ pub fn generate_service_router_without_helpers(
           http_adapters,
           "",
           query_helpers,
-        ]
-          |> list.filter(fn(s) { !string.is_empty(s) }),
-        "\n",
-      )
-    }
-  }
-}
-
-/// Generate service code with three layers of abstraction (deprecated - use generate_service_router_without_helpers)
-pub fn generate_service_router(
-  service: Service,
-  messages: List(Message),
-  registry: TypeRegistry,
-  file_path: String,
-) -> String {
-  case service.methods {
-    [] -> ""
-    methods -> {
-      // Generate Layer 1: Core service functions (BitArray -> Result)
-      let service_functions =
-        list.map(methods, fn(method) {
-          generate_service_function(method, service.name, registry, file_path)
-        })
-        |> string.join("\n\n")
-
-      // Generate Layer 2: HTTP adapter functions (gleam/http types)
-      let http_adapters =
-        list.filter(methods, has_http_annotation)
-        |> list.map(fn(method) {
-          generate_http_adapter(method, service.name, registry, file_path)
-        })
-        |> string.join("\n\n")
-
-      // Generate error type
-      let service_error_type = generate_service_error_type(service)
-
-      // Generate query parameter helpers only for GET/DELETE methods
-      let needed_helpers = analyze_needed_helpers(service, messages)
-      let query_helpers =
-        generate_query_helpers_for_service(
-          service,
-          messages,
-          registry,
-          file_path,
-        )
-      let query_param_helpers =
-        generate_query_param_helpers_conditional(needed_helpers)
-
-      string.join(
-        [
-          "/// Auto-generated service for " <> service.name,
-          "/// ",
-          "/// Layer 1: Core service functions (transport-agnostic BitArray -> Result)",
-          "/// Layer 2: HTTP adapters (gleam/http types, returns Result for middleware)",
-          "/// ",
-          "/// HTTP adapters return Result(Response, ServiceError) for middleware pattern",
-          "",
-          service_error_type,
-          "",
-          service_functions,
-          "",
-          http_adapters,
-          "",
-          query_helpers,
-          "",
-          query_param_helpers,
         ]
           |> list.filter(fn(s) { !string.is_empty(s) }),
         "\n",
@@ -192,20 +118,15 @@ fn has_http_annotation(method: Method) -> Bool {
 fn generate_service_function(
   method: Method,
   service_name: String,
-  registry: TypeRegistry,
-  file_path: String,
+  ctx: Context,
 ) -> String {
   let function_name = justin.snake_case(method.name) <> "_service"
 
   // Get qualified type names
-  let request_type_qualified =
-    types.get_qualified_type_name(method.input_type, registry, file_path)
-  let response_type_qualified =
-    types.get_qualified_type_name(method.output_type, registry, file_path)
-  let request_fn_qualified =
-    types.get_qualified_function_name(method.input_type, registry, file_path)
-  let response_fn_qualified =
-    types.get_qualified_function_name(method.output_type, registry, file_path)
+  let request_type_qualified = types.qualified_type(method.input_type, ctx)
+  let response_type_qualified = types.qualified_type(method.output_type, ctx)
+  let request_fn_qualified = types.qualified_fn(method.input_type, ctx)
+  let response_fn_qualified = types.qualified_fn(method.output_type, ctx)
 
   let handler_error_type = justin.pascal_case(service_name) <> "Error"
   let service_error_type = justin.pascal_case(service_name) <> "RequestError"
@@ -252,8 +173,7 @@ fn generate_service_function(
 fn generate_http_adapter(
   method: Method,
   service_name: String,
-  registry: TypeRegistry,
-  file_path: String,
+  ctx: Context,
 ) -> String {
   case method.http_method, method.http_path {
     Some(http_method), Some(path) -> {
@@ -261,12 +181,10 @@ fn generate_http_adapter(
       let service_function_name = justin.snake_case(method.name) <> "_service"
 
       // Get qualified type names
-      let request_type_qualified =
-        types.get_qualified_type_name(method.input_type, registry, file_path)
+      let request_type_qualified = types.qualified_type(method.input_type, ctx)
       let response_type_qualified =
-        types.get_qualified_type_name(method.output_type, registry, file_path)
-      let request_fn_qualified =
-        types.get_qualified_function_name(method.input_type, registry, file_path)
+        types.qualified_type(method.output_type, ctx)
+      let request_fn_qualified = types.qualified_fn(method.input_type, ctx)
 
       let handler_error_type = justin.pascal_case(service_name) <> "Error"
       let service_error_type =
@@ -458,11 +376,10 @@ pub fn generate_error_converter(service: Service) -> String {
 }
 
 /// Generate query parameter mapping functions for all GET/DELETE methods in the service
-pub fn generate_query_helpers_for_service(
+pub fn query_helpers(
   service: Service,
   messages: List(Message),
-  registry: TypeRegistry,
-  file_path: String,
+  ctx: Context,
 ) -> String {
   // Find all GET/DELETE methods that need query parameter mapping
   let query_methods =
@@ -478,30 +395,21 @@ pub fn generate_query_helpers_for_service(
     [] -> ""
     methods -> {
       let mappers =
-        list.map(methods, fn(method) {
-          generate_query_mapper_for_method(method, messages, registry, file_path)
-        })
+        list.map(methods, fn(method) { query_mapper(method, messages, ctx) })
       string.join(mappers, "\n\n")
     }
   }
 }
 
 /// Generate a query parameter mapper for a single method
-fn generate_query_mapper_for_method(
-  method: Method,
-  messages: List(Message),
-  registry: TypeRegistry,
-  file_path: String,
-) -> String {
+fn query_mapper(method: Method, messages: List(Message), ctx: Context) -> String {
   let function_name =
     "format_query_request_for_" <> justin.snake_case(method.name)
   let message_type = method.input_type
 
   // Get qualified type names
-  let message_type_qualified =
-    types.get_qualified_type_name(message_type, registry, file_path)
-  let message_fn_qualified =
-    types.get_qualified_function_name(message_type, registry, file_path)
+  let message_type_qualified = types.qualified_type(message_type, ctx)
+  let message_fn_qualified = types.qualified_fn(message_type, ctx)
 
   // Extract path parameters from the HTTP path
   let path_params = case method.http_path {

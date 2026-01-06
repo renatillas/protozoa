@@ -13,6 +13,20 @@ import protozoa/parser/proto.{
   type Enum, type Field, type FieldOption, type Message, type Type,
 }
 
+/// Codegen context - bundles registry, file path, and pre-computed package
+pub type Context {
+  Context(registry: TypeRegistry, file_path: String, package: String)
+}
+
+/// Create a new codegen context
+pub fn new_ctx(registry: TypeRegistry, file_path: String) -> Context {
+  let package = case type_registry.get_file_package(registry, file_path) {
+    option.Some(pkg) -> pkg
+    option.None -> ""
+  }
+  Context(registry: registry, file_path: file_path, package: package)
+}
+
 // Reserved Gleam keywords that need to be escaped when used as field names
 const gleam_keywords = [
   "case",
@@ -51,23 +65,13 @@ pub fn escape_keyword(name: String) -> String {
 }
 
 /// Generate all type definitions for a list of messages
-pub fn generate_types_with_registry(
-  messages: List(Message),
-  registry: TypeRegistry,
-  file_path: String,
-) -> String {
+pub fn generate_types(messages: List(Message), ctx: Context) -> String {
   let generated_enum_names = set.new()
   let #(all_types, _) =
     messages
     |> list.fold(#([], generated_enum_names), fn(acc, msg) {
       let #(existing_types, seen_enums) = acc
-      let #(new_types, updated_enums) =
-        generate_message_types_with_registry_tracked(
-          msg,
-          registry,
-          file_path,
-          seen_enums,
-        )
+      let #(new_types, updated_enums) = generate_msg_types(msg, ctx, seen_enums)
       #(list.append(existing_types, new_types), updated_enums)
     })
 
@@ -76,10 +80,9 @@ pub fn generate_types_with_registry(
 }
 
 /// Generate a single message type and its nested types
-pub fn generate_message_types_with_registry_tracked(
+pub fn generate_msg_types(
   message: Message,
-  registry: TypeRegistry,
-  file_path: String,
+  ctx: Context,
   seen_enums: set.Set(String),
 ) -> #(List(String), set.Set(String)) {
   // Generate nested messages first
@@ -89,28 +92,21 @@ pub fn generate_message_types_with_registry_tracked(
       let #(existing_nested, current_enums) = acc
       let flattened_msg = flatten_nested_message(nested_msg, message)
       let #(new_nested_types, updated_enums) =
-        generate_message_types_with_registry_tracked(
-          flattened_msg,
-          registry,
-          file_path,
-          current_enums,
-        )
+        generate_msg_types(flattened_msg, ctx, current_enums)
       #(list.append(existing_nested, new_nested_types), updated_enums)
     })
 
   // Generate nested enums
   let #(nested_enum_types, enums_after_enum_gen) =
-    generate_nested_enum_types(message, registry, file_path, enums_after_nested)
+    generate_nested_enum_types(message, ctx, enums_after_nested)
 
   // Generate oneof types
   let oneof_types =
     message.oneofs
-    |> list.map(fn(oneof) {
-      generate_oneof_type(message, oneof, registry, file_path)
-    })
+    |> list.map(fn(oneof) { generate_oneof_type(message, oneof, ctx) })
 
   // Generate the main message type
-  let main_type = generate_message_type(message, registry, file_path)
+  let main_type = generate_message_type(message, ctx)
 
   // Combine all types
   let all_types =
@@ -120,23 +116,15 @@ pub fn generate_message_types_with_registry_tracked(
 }
 
 /// Generate enum types for all enums in a list
-pub fn generate_enum_types(
-  enums: List(Enum),
-  registry: TypeRegistry,
-  file_path: String,
-) -> String {
+pub fn generate_enum_types(enums: List(Enum), ctx: Context) -> String {
   enums
-  |> list.map(fn(enum) { generate_enum_type(enum, registry, file_path) })
+  |> list.map(fn(enum) { generate_enum_type(enum, ctx) })
   |> string.join("\n\n")
 }
 
 /// Generate a single enum type
-pub fn generate_enum_type(
-  enum: Enum,
-  registry: TypeRegistry,
-  file_path: String,
-) -> String {
-  let type_name = get_qualified_type_name(enum.name, registry, file_path)
+pub fn generate_enum_type(enum: Enum, ctx: Context) -> String {
+  let type_name = qualified_type(enum.name, ctx)
   let variants =
     enum.values
     |> list.map(fn(variant) { "  " <> capitalize_first(variant.name) })
@@ -146,18 +134,14 @@ pub fn generate_enum_type(
 }
 
 /// Generate a single message type
-fn generate_message_type(
-  message: Message,
-  registry: TypeRegistry,
-  file_path: String,
-) -> String {
+fn generate_message_type(message: Message, ctx: Context) -> String {
   // Get the fully qualified type name for this message
-  let type_name = get_qualified_type_name(message.name, registry, file_path)
+  let type_name = qualified_type(message.name, ctx)
 
   let fields =
     message.fields
     |> list.map(fn(field) {
-      let gleam_type = resolve_field_type(field, registry, file_path, message)
+      let gleam_type = resolve_field_type(field, ctx, message)
       let escaped_name = escape_keyword(field.name)
       let deprecation_comment = case has_deprecated_option(field.options) {
         True -> " // @deprecated"
@@ -192,19 +176,9 @@ fn generate_message_type(
 }
 
 /// Get the fully qualified and flattened type name for a message
-pub fn get_qualified_type_name(
-  name: String,
-  registry: TypeRegistry,
-  file_path: String,
-) -> String {
-  // Get current file's package
-  let package = case type_registry.get_file_package(registry, file_path) {
-    option.Some(pkg) -> pkg
-    option.None -> ""
-  }
-
+pub fn qualified_type(name: String, ctx: Context) -> String {
   // Build fully qualified name and flatten it
-  let fqn = case package {
+  let fqn = case ctx.package {
     "" -> name
     pkg -> pkg <> "." <> name
   }
@@ -213,13 +187,9 @@ pub fn get_qualified_type_name(
 
 /// Get the qualified snake_case function name suffix for a message
 /// e.g., "base" package + "BaseMessage" -> "base_base_message"
-pub fn get_qualified_function_name(
-  name: String,
-  registry: TypeRegistry,
-  file_path: String,
-) -> String {
+pub fn qualified_fn(name: String, ctx: Context) -> String {
   // Get the qualified type name first
-  let type_name = get_qualified_type_name(name, registry, file_path)
+  let type_name = qualified_type(name, ctx)
   // Convert to snake_case
   justin.snake_case(type_name)
 }
@@ -228,26 +198,23 @@ pub fn get_qualified_function_name(
 fn generate_oneof_type(
   parent_message: Message,
   oneof: proto.Oneof,
-  registry: TypeRegistry,
-  file_path: String,
+  ctx: Context,
 ) -> String {
   // Get qualified parent type name and append oneof name
-  let parent_type_name =
-    get_qualified_type_name(parent_message.name, registry, file_path)
+  let parent_type_name = qualified_type(parent_message.name, ctx)
   let type_name = parent_type_name <> capitalize_first(oneof.name)
   let variants =
     oneof.fields
     |> list.map(fn(field) {
       let base_variant_name = capitalize_first(field.name)
       // Qualify the field type if it's a nested type
-      let qualified_type =
+      let qualified =
         qualify_nested_field_type(
           field.field_type,
           parent_message.name,
           parent_message,
         )
-      let gleam_type =
-        resolve_field_type_simple(qualified_type, registry, file_path)
+      let gleam_type = resolve_type(qualified, ctx)
       // Avoid naming conflicts with well-known types
       let variant_name = case base_variant_name, gleam_type {
         "Empty", "Empty" -> "EmptyData"
@@ -312,8 +279,7 @@ fn flatten_nested_message(nested_msg: Message, parent: Message) -> Message {
 
 fn generate_nested_enum_types(
   message: Message,
-  registry: TypeRegistry,
-  file_path: String,
+  ctx: Context,
   seen_enums: set.Set(String),
 ) -> #(List(String), set.Set(String)) {
   message.nested_enums
@@ -326,7 +292,7 @@ fn generate_nested_enum_types(
       False -> {
         let flattened_enum =
           proto.Enum(name: flattened_name, values: nested_enum.values)
-        let enum_code = generate_enum_type(flattened_enum, registry, file_path)
+        let enum_code = generate_enum_type(flattened_enum, ctx)
         let updated_enums = set.insert(current_enums, flattened_name)
         #(list.append(existing_enum_types, [enum_code]), updated_enums)
       }
@@ -336,54 +302,32 @@ fn generate_nested_enum_types(
 
 fn resolve_field_type(
   field: Field,
-  registry: TypeRegistry,
-  file_path: String,
+  ctx: Context,
   parent_message: Message,
 ) -> String {
   // Get the qualified parent name (including package prefix)
-  let qualified_parent_name =
-    get_qualified_type_name(parent_message.name, registry, file_path)
+  let qualified_parent_name = qualified_type(parent_message.name, ctx)
 
   // First, qualify the field type if it references a nested type
-  let qualified_type =
-    qualify_nested_field_type_with_qualified_name(
-      field.field_type,
-      qualified_parent_name,
-      parent_message,
-    )
+  let qualified =
+    qualify_nested_type(field.field_type, qualified_parent_name, parent_message)
 
-  case qualified_type {
+  case qualified {
     proto.Repeated(inner) -> {
       let qualified_inner =
-        qualify_nested_field_type_with_qualified_name(
-          inner,
-          qualified_parent_name,
-          parent_message,
-        )
-      "List("
-      <> resolve_field_type_simple(qualified_inner, registry, file_path)
-      <> ")"
+        qualify_nested_type(inner, qualified_parent_name, parent_message)
+      "List(" <> resolve_type(qualified_inner, ctx) <> ")"
     }
     proto.Optional(inner) -> {
       let qualified_inner =
-        qualify_nested_field_type_with_qualified_name(
-          inner,
-          qualified_parent_name,
-          parent_message,
-        )
-      "option.Option("
-      <> resolve_field_type_simple(qualified_inner, registry, file_path)
-      <> ")"
+        qualify_nested_type(inner, qualified_parent_name, parent_message)
+      "option.Option(" <> resolve_type(qualified_inner, ctx) <> ")"
     }
-    _ -> resolve_field_type_simple(qualified_type, registry, file_path)
+    _ -> resolve_type(qualified, ctx)
   }
 }
 
-fn resolve_field_type_simple(
-  proto_type: Type,
-  registry: TypeRegistry,
-  file_path: String,
-) -> String {
+pub fn resolve_type(proto_type: Type, ctx: Context) -> String {
   case proto_type {
     proto.String -> "String"
     proto.Int32 -> "Int"
@@ -400,19 +344,15 @@ fn resolve_field_type_simple(
     proto.Bytes -> "BitArray"
     proto.Double -> "Float"
     proto.Float -> "Float"
-    proto.MessageType(name) ->
-      resolve_external_type_simple(name, registry, file_path)
-    proto.EnumType(name) ->
-      resolve_external_type_simple(name, registry, file_path)
-    proto.Repeated(inner) ->
-      "List(" <> resolve_field_type_simple(inner, registry, file_path) <> ")"
-    proto.Optional(inner) ->
-      "option.Option(" <> resolve_field_type_simple(inner, registry, file_path) <> ")"
+    proto.MessageType(name) -> resolve_external_type(name, ctx)
+    proto.EnumType(name) -> resolve_external_type(name, ctx)
+    proto.Repeated(inner) -> "List(" <> resolve_type(inner, ctx) <> ")"
+    proto.Optional(inner) -> "option.Option(" <> resolve_type(inner, ctx) <> ")"
     proto.Map(key, value) ->
       "List(#("
-      <> resolve_field_type_simple(key, registry, file_path)
+      <> resolve_type(key, ctx)
       <> ", "
-      <> resolve_field_type_simple(value, registry, file_path)
+      <> resolve_type(value, ctx)
       <> "))"
   }
 }
@@ -439,9 +379,9 @@ fn qualify_nested_field_type(
   }
 }
 
-/// Like qualify_nested_field_type but takes an already-qualified parent name
-/// This is used when we need the full package-prefixed name for the nested type
-fn qualify_nested_field_type_with_qualified_name(
+/// Qualify nested field type with already-qualified parent name
+/// Used when we need the full package-prefixed name for the nested type
+fn qualify_nested_type(
   proto_type: Type,
   qualified_parent_name: String,
   parent_message: Message,
@@ -474,21 +414,9 @@ fn is_nested_enum_in_message(enum_name: String, parent_message: Message) -> Bool
   |> list.any(fn(nested_enum) { nested_enum.name == enum_name })
 }
 
-fn resolve_external_type_simple(
-  name: String,
-  registry: TypeRegistry,
-  file_path: String,
-) -> String {
-  // Get current file's package for type resolution
-  let current_package = case
-    type_registry.get_file_package(registry, file_path)
-  {
-    option.Some(pkg) -> pkg
-    option.None -> ""
-  }
-
+fn resolve_external_type(name: String, ctx: Context) -> String {
   // Try to resolve the type through the registry
-  case type_registry.resolve_type_reference(registry, name, current_package) {
+  case type_registry.resolve_type_reference(ctx.registry, name, ctx.package) {
     Ok(resolved_fqn) -> {
       // All types are merged into a single Gleam module, so just flatten the name
       flatten_type_name(resolved_fqn)

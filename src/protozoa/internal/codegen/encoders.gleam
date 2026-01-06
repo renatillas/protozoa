@@ -5,56 +5,38 @@
 
 import gleam/int
 import gleam/list
-import gleam/option
 import gleam/set
 import gleam/string
 import justin
-import protozoa/internal/codegen/types.{capitalize_first, flatten_type_name}
-import protozoa/internal/type_registry.{type TypeRegistry}
+import protozoa/internal/codegen/types.{
+  type Context, capitalize_first, flatten_type_name,
+}
+import protozoa/internal/type_registry
 import protozoa/parser/proto.{type Field, type Message, type Type}
 
 /// Generate all encoders for a list of messages
-pub fn generate_encoders(
-  messages: List(Message),
-  registry: TypeRegistry,
-  file_path: String,
-) -> String {
-  // Get the package for type resolution
-  let current_package = case type_registry.get_file_package(registry, file_path)
-  {
-    option.Some(pkg) -> pkg
-    option.None -> ""
-  }
-
+pub fn generate_encoders(messages: List(Message), ctx: Context) -> String {
   let all_messages = collect_all_messages_flattened(messages)
 
   // Resolve enum types in all messages
   let resolved_messages =
-    list.map(all_messages, fn(msg) {
-      resolve_message_types(msg, registry, current_package)
-    })
+    list.map(all_messages, fn(msg) { resolve_message_types(msg, ctx) })
 
   resolved_messages
-  |> list.map(fn(message) {
-    generate_message_encoder_with_registry(message, registry, file_path)
-  })
+  |> list.map(fn(message) { generate_encoder(message, ctx) })
   |> string.join("\n\n")
 }
 
 /// Resolve field types in a message (convert MessageType to EnumType if needed)
-fn resolve_message_types(
-  msg: Message,
-  registry: TypeRegistry,
-  current_package: String,
-) -> Message {
+fn resolve_message_types(msg: Message, ctx: Context) -> Message {
   let resolved_fields =
     list.map(msg.fields, fn(field) {
       proto.Field(
         ..field,
         field_type: type_registry.resolve_field_type(
-          registry,
+          ctx.registry,
           field.field_type,
-          current_package,
+          ctx.package,
         ),
       )
     })
@@ -66,9 +48,9 @@ fn resolve_message_types(
           proto.Field(
             ..field,
             field_type: type_registry.resolve_field_type(
-              registry,
+              ctx.registry,
               field.field_type,
-              current_package,
+              ctx.package,
             ),
           )
         })
@@ -79,16 +61,10 @@ fn resolve_message_types(
 }
 
 /// Generate encoder for a single message
-pub fn generate_message_encoder_with_registry(
-  message: Message,
-  registry: TypeRegistry,
-  file_path: String,
-) -> String {
+pub fn generate_encoder(message: Message, ctx: Context) -> String {
   // Get qualified names for function, type, and parameter
-  let qualified_fn_name =
-    types.get_qualified_function_name(message.name, registry, file_path)
-  let qualified_type_name =
-    types.get_qualified_type_name(message.name, registry, file_path)
+  let qualified_fn_name = types.qualified_fn(message.name, ctx)
+  let qualified_type_name = types.qualified_type(message.name, ctx)
   let function_name = "encode_" <> qualified_fn_name
   let is_empty = list.is_empty(message.fields) && list.is_empty(message.oneofs)
 
@@ -117,13 +93,7 @@ pub fn generate_message_encoder_with_registry(
 
   // Generate different types of encoders
   let regular_encoders =
-    generate_regular_field_encoders(
-      regular_fields,
-      message,
-      param_name,
-      registry,
-      file_path,
-    )
+    generate_regular_field_encoders(regular_fields, param_name)
   let oneof_encoders =
     generate_oneof_encoders(message.oneofs, message, param_name)
   let repeated_code = generate_repeated_fields_code(repeated_fields, param_name)
@@ -131,7 +101,7 @@ pub fn generate_message_encoder_with_registry(
 
   // Build the function body
   let body =
-    build_encoder_function_body(
+    build_encoder_body(
       repeated_fields,
       map_fields,
       regular_encoders,
@@ -152,19 +122,16 @@ pub fn generate_message_encoder_with_registry(
 }
 
 /// Generate enum helper encoders
-pub fn generate_enum_helpers_with_nested(
+pub fn generate_enum_helpers(
   top_level_enums: List(proto.Enum),
   messages: List(Message),
-  registry: TypeRegistry,
-  file_path: String,
+  ctx: Context,
 ) -> String {
   let all_enums = collect_all_enums_flattened(top_level_enums, messages)
   let enums_in_oneofs = collect_enum_names_in_oneofs(messages)
 
   all_enums
-  |> list.map(fn(enum) {
-    generate_enum_helper(enum, enums_in_oneofs, registry, file_path)
-  })
+  |> list.map(fn(enum) { generate_enum_helper(enum, enums_in_oneofs, ctx) })
   |> string.join("\n\n")
 }
 
@@ -187,16 +154,11 @@ fn collect_enum_names_in_oneofs(messages: List(Message)) -> set.Set(String) {
 
 fn generate_regular_field_encoders(
   fields: List(Field),
-  _message: Message,
   param_name: String,
-  _registry: TypeRegistry,
-  _file_path: String,
 ) -> List(String) {
   // Field types are already resolved by resolve_message_types in generate_encoders
   fields
-  |> list.map(fn(field) {
-    generate_field_encoder(field, param_name)
-  })
+  |> list.map(fn(field) { generate_field_encoder(field, param_name) })
 }
 
 fn generate_oneof_encoders(
@@ -206,7 +168,7 @@ fn generate_oneof_encoders(
 ) -> List(String) {
   oneofs
   |> list.map(fn(oneof) {
-    generate_oneof_encoder(message.name, oneof, param_name, message)
+    generate_oneof_encoder(message.name, oneof, param_name)
   })
 }
 
@@ -235,7 +197,7 @@ fn generate_map_fields_code(fields: List(Field), param_name: String) -> String {
   }
 }
 
-fn build_encoder_function_body(
+fn build_encoder_body(
   repeated_fields: List(Field),
   map_fields: List(Field),
   regular_encoders: List(String),
@@ -371,7 +333,6 @@ fn generate_oneof_encoder(
   message_name: String,
   oneof: proto.Oneof,
   param_name: String,
-  _parent_message: Message,
 ) -> String {
   let escaped_oneof_name = types.escape_keyword(oneof.name)
   let oneof_access = param_name <> "." <> escaped_oneof_name
@@ -530,14 +491,11 @@ fn generate_map_value_encoder(proto_type: Type) -> String {
 fn generate_enum_helper(
   enum: proto.Enum,
   enums_in_oneofs: set.Set(String),
-  registry: TypeRegistry,
-  file_path: String,
+  ctx: Context,
 ) -> String {
   // Get qualified names for the enum
-  let qualified_type_name =
-    types.get_qualified_type_name(enum.name, registry, file_path)
-  let qualified_fn_name =
-    types.get_qualified_function_name(enum.name, registry, file_path)
+  let qualified_type_name = types.qualified_type(enum.name, ctx)
+  let qualified_fn_name = types.qualified_fn(enum.name, ctx)
 
   let encoder_function =
     generate_enum_encoder(enum, qualified_type_name, qualified_fn_name)
@@ -629,7 +587,11 @@ fn generate_enum_decoder(
     True ->
       main_decoder
       <> "\n\n"
-      <> generate_enum_field_decoder(enum, qualified_type_name, qualified_fn_name)
+      <> generate_enum_field_decoder(
+        enum,
+        qualified_type_name,
+        qualified_fn_name,
+      )
     False -> main_decoder
   }
 }
