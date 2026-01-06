@@ -11,6 +11,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/set
+import gleam/string
 import nibble
 import nibble/lexer
 import protozoa/parser/combinator as c
@@ -59,7 +60,10 @@ pub fn describe_error(error: ParseError) -> String {
           <> lexeme
       }
     ParseError(dead_ends) -> {
-      "Parse error: " <> int.to_string(list.length(dead_ends)) <> " errors"
+      "Parse error: "
+      <> int.to_string(list.length(dead_ends))
+      <> " dead ends "
+      <> string.inspect(dead_ends)
     }
     InvalidFieldNumber(message, field, number) ->
       "Invalid field number "

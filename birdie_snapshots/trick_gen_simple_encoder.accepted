@@ -1,0 +1,13 @@
+---
+version: 1.5.1
+title: trick_gen_simple_encoder
+file: ./test/trick_gen_test.gleam
+test_name: generate_simple_encoder_test
+---
+pub fn encode_person(person: Person) {
+  encode.message(
+    [encode.string_field(1, person.name), encode.int32_field(2, person.age)],
+  )
+}
+
+

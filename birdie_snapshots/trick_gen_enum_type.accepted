@@ -1,0 +1,13 @@
+---
+version: 1.5.1
+title: trick_gen_enum_type
+file: ./test/trick_gen_test.gleam
+test_name: generate_enum_type_test
+---
+pub type Status {
+  UNKNOWN
+  ACTIVE
+  INACTIVE
+}
+
+

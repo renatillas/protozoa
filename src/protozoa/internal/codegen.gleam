@@ -10,9 +10,8 @@ import gleam/list
 import gleam/option
 import gleam/result
 import gleam/string
-import protozoa/internal/codegen/decoders
-import protozoa/internal/codegen/encoders
-import protozoa/internal/codegen/router
+import protozoa/internal/codegen/trick_gen
+import protozoa/internal/codegen/trick_router
 import protozoa/internal/codegen/types
 import protozoa/internal/type_registry.{type TypeRegistry}
 import protozoa/internal/well_known_type
@@ -130,12 +129,28 @@ fn generate_file_content_sections(
   registry: TypeRegistry,
 ) -> Result(ContentSections, String) {
   let ctx = types.new_ctx(registry, file_path)
-  let enum_types = types.generate_enum_types(proto_file.enums, ctx)
-  let message_types = types.generate_types(proto_file.messages, ctx)
-  let message_encoders = encoders.generate_encoders(proto_file.messages, ctx)
-  let message_decoders = decoders.generate_decoders(proto_file.messages, ctx)
-  let enum_helpers =
-    encoders.generate_enum_helpers(proto_file.enums, proto_file.messages, ctx)
+
+  // Flatten nested messages for code generation
+  let all_messages = flatten_all_messages(proto_file.messages)
+
+  // Flatten nested enums for code generation
+  let all_enums = flatten_all_enums(proto_file.messages, proto_file.enums)
+
+  // Generate enum types using trick_gen
+  let enum_types = case trick_gen.generate_enums_code(all_enums, ctx) {
+    Ok(code) -> code
+    Error(_) -> ""
+  }
+
+  // Generate message code (types + encoders + decoders) using trick_gen
+  let message_code = case trick_gen.generate_messages_code(all_messages, ctx) {
+    Ok(code) -> code
+    Error(_) -> ""
+  }
+
+  // Generate enum helpers (encode_X_value and decode_X_field)
+  let enum_helpers = generate_enum_helpers(all_enums, ctx)
+
   let service_stubs = generate_service_stubs(proto_file.services)
   let #(service_routers, helper_functions) =
     generate_all_service_routers(proto_file.services, proto_file.messages, ctx)
@@ -148,9 +163,9 @@ fn generate_file_content_sections(
 
   Ok(ContentSections(
     enum_types: enum_types,
-    message_types: message_types,
-    message_encoders: message_encoders,
-    message_decoders: message_decoders,
+    message_types: message_code,
+    message_encoders: "",
+    message_decoders: "",
     enum_helpers: enum_helpers,
     service_stubs: service_stubs,
     service_routers: service_routers,
@@ -199,6 +214,127 @@ fn combine_non_empty(left: String, right: String) -> String {
     False, True -> left
     False, False -> left <> "\n\n" <> right
   }
+}
+
+/// Flatten nested messages from all messages recursively
+fn flatten_all_messages(messages: List(proto.Message)) -> List(proto.Message) {
+  list.flat_map(messages, fn(msg) {
+    [msg, ..flatten_all_messages(msg.nested_messages)]
+  })
+}
+
+/// Flatten nested enums from messages and combine with top-level enums
+fn flatten_all_enums(
+  messages: List(proto.Message),
+  top_level_enums: List(proto.Enum),
+) -> List(proto.Enum) {
+  let nested_enums =
+    list.flat_map(messages, fn(msg) {
+      let direct_nested = msg.nested_enums
+      let deeper_nested = flatten_all_enums(msg.nested_messages, [])
+      list.append(direct_nested, deeper_nested)
+    })
+  list.append(top_level_enums, nested_enums)
+}
+
+/// Generate enum helper functions (encode_X_value and decode_X_field)
+fn generate_enum_helpers(
+  enums: List(proto.Enum),
+  ctx: types.Context,
+) -> String {
+  enums
+  |> list.map(fn(enum) { generate_single_enum_helpers(enum, ctx) })
+  |> list.filter(fn(s) { !string.is_empty(s) })
+  |> string.join("\n\n")
+}
+
+/// Generate helpers for a single enum
+fn generate_single_enum_helpers(
+  enum: proto.Enum,
+  ctx: types.Context,
+) -> String {
+  let type_name = types.qualified_type(enum.name, ctx)
+  let fn_suffix = types.qualified_fn(enum.name, ctx)
+
+  // Generate encode_X_value function
+  let encode_fn =
+    "pub fn encode_"
+    <> fn_suffix
+    <> "_value(value: "
+    <> type_name
+    <> ") -> Int {\n"
+    <> "  case value {\n"
+    <> string.join(
+      list.map(enum.values, fn(v) {
+        "    "
+        <> types.capitalize_first(v.name)
+        <> " -> "
+        <> string.inspect(v.number)
+      }),
+      "\n",
+    )
+    <> "\n  }\n}"
+
+  // Generate decode_X_field function
+  let decode_fn =
+    "pub fn decode_"
+    <> fn_suffix
+    <> "_field(field_num: Int) -> decode.Decoder("
+    <> type_name
+    <> ") {\n"
+    <> "  decode.enum_field(field_num, fn(value) {\n"
+    <> "    case value {\n"
+    <> string.join(
+      list.map(enum.values, fn(v) {
+        "      "
+        <> string.inspect(v.number)
+        <> " -> Ok("
+        <> types.capitalize_first(v.name)
+        <> ")"
+      }),
+      "\n",
+    )
+    <> "\n      _ -> Error(decode.DecodeError(\n"
+    <> "        expected: \"valid "
+    <> type_name
+    <> " value\",\n"
+    <> "        found: \"Unknown enum value: \" <> int.to_string(value),\n"
+    <> "        path: [],\n"
+    <> "      ))\n"
+    <> "    }\n"
+    <> "  })\n}"
+
+  // Generate decode_repeated_X function
+  let decode_repeated_fn =
+    "pub fn decode_repeated_"
+    <> fn_suffix
+    <> "(field_num: Int) -> decode.Decoder(List("
+    <> type_name
+    <> ")) {\n"
+    <> "  decode.repeated_field(field_num, fn(field) {\n"
+    <> "    use value <- result.try(decode.int32_field(field))\n"
+    <> "    case value {\n"
+    <> string.join(
+      list.map(enum.values, fn(v) {
+        "      "
+        <> string.inspect(v.number)
+        <> " -> Ok("
+        <> types.capitalize_first(v.name)
+        <> ")"
+      }),
+      "\n",
+    )
+    <> "\n      _ -> Error(decode.DecodeError(\n"
+    <> "        expected: \"valid "
+    <> type_name
+    <> " value\",\n"
+    <> "        found: \"Unknown enum value: \" <> int.to_string(value),\n"
+    <> "        path: [],\n"
+    <> "      ))\n"
+    <> "    }\n"
+    <> "  })\n}"
+
+  encode_fn <> "\n\n" <> decode_fn <> "\n\n" <> decode_repeated_fn
 }
 
 fn is_well_known_proto_file(file_path: String) -> Bool {
@@ -716,19 +852,17 @@ fn generate_all_service_routers(
       let routers =
         services
         |> list.map(fn(service) {
-          router.generate_router(service, messages, ctx)
+          trick_router.generate_router(service, messages, ctx)
         })
         |> list.filter(fn(s) { !string.is_empty(s) })
         |> string.join("\n\n")
 
       // Collect all needed helpers from all services
+      // Note: Path params are now function arguments, only query helpers needed
       let all_needed_helpers =
         services
         |> list.fold(
-          router.NeededHelpers(
-            path_extraction: False,
-            path_string: False,
-            path_int: False,
+          trick_router.NeededHelpers(
             query_string: False,
             query_int: False,
             query_bool: False,
@@ -739,16 +873,15 @@ fn generate_all_service_routers(
             query_optional_int: False,
           ),
           fn(acc, service) {
-            router.merge_needed_helpers(
+            trick_router.merge_needed_helpers(
               acc,
-              router.analyze_needed_helpers(service, messages),
+              trick_router.analyze_needed_helpers(service, messages),
             )
           },
         )
 
-      // Generate helper functions once
-      let helpers =
-        router.generate_query_param_helpers_conditional(all_needed_helpers)
+      // Generate helper functions once (using string-based generation for performance)
+      let helpers = trick_router.generate_query_helpers_string(all_needed_helpers)
 
       #(routers, helpers)
     }

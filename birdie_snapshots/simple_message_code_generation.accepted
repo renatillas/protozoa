@@ -14,25 +14,32 @@ import protozoa/decode
 import protozoa/encode
 
 pub type TestSimpleMessage {
-  TestSimpleMessage(
-    name: String,
-    value: Int,
+  TestSimpleMessage(name: String, value: Int)
+}
+
+
+
+pub fn encode_test_simple_message(test_simple_message: TestSimpleMessage) {
+  encode.message(
+    [
+      encode.string_field(1, test_simple_message.name),
+      encode.int32_field(2, test_simple_message.value), 
+    ],
   )
 }
 
-pub fn encode_test_simple_message(test_simple_message: TestSimpleMessage) -> BitArray {
-  encode.message([
-    encode.string_field(1, test_simple_message.name),
-    encode.int32_field(2, test_simple_message.value),
-  ])
-}
 
-pub fn test_simple_message_decoder() -> decode.Decoder(TestSimpleMessage) {
+
+pub fn test_simple_message_decoder() {
   use name <- decode.then(decode.string_with_default(1, ""))
   use value <- decode.then(decode.int32_with_default(2, 0))
   decode.success(TestSimpleMessage(name: name, value: value))
 }
 
-pub fn decode_test_simple_message(data: BitArray) -> Result(TestSimpleMessage, List(decode.DecodeError)) {
+
+
+pub fn decode_test_simple_message(data: BitArray) {
   decode.run(data, test_simple_message_decoder())
 }
+
+

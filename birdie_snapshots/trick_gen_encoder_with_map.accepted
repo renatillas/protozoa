@@ -1,0 +1,28 @@
+---
+version: 1.5.1
+title: trick_gen_encoder_with_map
+file: ./test/trick_gen_test.gleam
+test_name: generate_encoder_with_map_field_test
+---
+pub fn encode_config(config: Config) {
+  {
+    let settings_fields =
+      list.map(
+        config.settings,
+        fn(pair: #(String, String)) {
+          encode.field(
+            1,
+            wire.LengthDelimited,
+            encode.length_delimited(
+              encode.message(
+                [encode.string_field(1, pair.0), encode.string_field(2, pair.1)],
+              ),
+            ),
+          )
+        },
+      )
+    encode.message(list.flatten([settings_fields]))
+  }
+}
+
+

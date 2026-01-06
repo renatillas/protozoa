@@ -121,9 +121,7 @@ message SensorResponse {
 
 service SensorService {
     // Get sensor information
-    rpc GetSensor(GetSensorRequest) returns (SensorResponse)
-    
+    rpc GetSensor(GetSensorRequest) returns (SensorResponse);
     // Create a new sensor
-    rpc CreateSensor(CreateSensorRequest) returns (SensorResponse)
-    
+    rpc CreateSensor(CreateSensorRequest) returns (SensorResponse);
 }

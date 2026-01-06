@@ -1,0 +1,17 @@
+---
+version: 1.5.1
+title: trick_gen_encoder_with_oneof
+file: ./test/trick_gen_test.gleam
+test_name: generate_encoder_with_oneof_test
+---
+pub fn encode_response(response: Response) {
+  encode.message([case response.result {
+        Some(oneof_value) -> case oneof_value {
+          Success(value) -> encode.string_field(1, value)
+          Error(value) -> encode.string_field(2, value)
+        }
+        None -> <<>>
+      }])
+}
+
+

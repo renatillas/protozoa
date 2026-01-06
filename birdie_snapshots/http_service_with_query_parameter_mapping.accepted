@@ -21,158 +21,217 @@ import protozoa/encode
 import protozoa/wire
 
 pub type TemperatureRequest {
-  TemperatureRequest(
-    id: Int,
-    celsius: Int,
-    location: String,
-    use_cache: Bool,
-    precision: Float,
+  TemperatureRequest(id: Int, celsius: Int, location: String, use_cache: Bool, precision: Float)
+}
+
+
+
+pub fn encode_temperature_request(temperature_request: TemperatureRequest) {
+  encode.message(
+    [
+      encode.int32_field(1, temperature_request.id),
+      encode.int32_field(2, temperature_request.celsius),
+      encode.string_field(3, temperature_request.location),
+      encode.bool_field(4, temperature_request.use_cache),
+      encode.float_field(5, temperature_request.precision), 
+    ],
   )
 }
 
-pub type TemperatureResponse {
-  TemperatureResponse(
-    fahrenheit: Int,
-    message: String,
-  )
-}
 
-pub type DeleteRequest {
-  DeleteRequest(
-    id: Int,
-  )
-}
 
-pub type DeleteResponse {
-  DeleteResponse(
-    success: Bool,
-    message: String,
-  )
-}
-
-pub type ListRequest {
-  ListRequest(
-    limit: Int,
-    offset: Int,
-  )
-}
-
-pub type ListResponse {
-  ListResponse(
-    temperatures: List(TemperatureResponse),
-    total: Int,
-  )
-}
-
-pub fn encode_list_response(list_response: ListResponse) -> BitArray {
-  let temperatures_fields = list.map(list_response.temperatures, fn(v) { encode.field(1, wire.LengthDelimited, encode.length_delimited(encode_temperature_response(v))) })
-  encode.message(list.flatten([temperatures_fields, [encode.int32_field(2, list_response.total)]]))
-}
-
-pub fn encode_list_request(list_request: ListRequest) -> BitArray {
-  encode.message([
-    encode.int32_field(1, list_request.limit),
-    encode.int32_field(2, list_request.offset),
-  ])
-}
-
-pub fn encode_delete_response(delete_response: DeleteResponse) -> BitArray {
-  encode.message([
-    encode.bool_field(1, delete_response.success),
-    encode.string_field(2, delete_response.message),
-  ])
-}
-
-pub fn encode_delete_request(delete_request: DeleteRequest) -> BitArray {
-  encode.message([
-    encode.int32_field(1, delete_request.id),
-  ])
-}
-
-pub fn encode_temperature_response(temperature_response: TemperatureResponse) -> BitArray {
-  encode.message([
-    encode.int32_field(1, temperature_response.fahrenheit),
-    encode.string_field(2, temperature_response.message),
-  ])
-}
-
-pub fn encode_temperature_request(temperature_request: TemperatureRequest) -> BitArray {
-  encode.message([
-    encode.int32_field(1, temperature_request.id),
-    encode.int32_field(2, temperature_request.celsius),
-    encode.string_field(3, temperature_request.location),
-    encode.bool_field(4, temperature_request.use_cache),
-    encode.float_field(5, temperature_request.precision),
-  ])
-}
-
-pub fn list_response_decoder() -> decode.Decoder(ListResponse) {
-  use temperatures <- decode.then(decode.repeated_field(1, fn(field) { decode.message_field(_, temperature_response_decoder())(field) }))
-  use total <- decode.then(decode.int32_with_default(2, 0))
-  decode.success(ListResponse(temperatures: temperatures, total: total))
-}
-
-pub fn decode_list_response(data: BitArray) -> Result(ListResponse, List(decode.DecodeError)) {
-  decode.run(data, list_response_decoder())
-}
-
-pub fn list_request_decoder() -> decode.Decoder(ListRequest) {
-  use limit <- decode.then(decode.int32_with_default(1, 0))
-  use offset <- decode.then(decode.int32_with_default(2, 0))
-  decode.success(ListRequest(limit: limit, offset: offset))
-}
-
-pub fn decode_list_request(data: BitArray) -> Result(ListRequest, List(decode.DecodeError)) {
-  decode.run(data, list_request_decoder())
-}
-
-pub fn delete_response_decoder() -> decode.Decoder(DeleteResponse) {
-  use success <- decode.then(decode.bool_with_default(1, False))
-  use message <- decode.then(decode.string_with_default(2, ""))
-  decode.success(DeleteResponse(success: success, message: message))
-}
-
-pub fn decode_delete_response(data: BitArray) -> Result(DeleteResponse, List(decode.DecodeError)) {
-  decode.run(data, delete_response_decoder())
-}
-
-pub fn delete_request_decoder() -> decode.Decoder(DeleteRequest) {
-  use id <- decode.then(decode.int32_with_default(1, 0))
-  decode.success(DeleteRequest(id: id))
-}
-
-pub fn decode_delete_request(data: BitArray) -> Result(DeleteRequest, List(decode.DecodeError)) {
-  decode.run(data, delete_request_decoder())
-}
-
-pub fn temperature_response_decoder() -> decode.Decoder(TemperatureResponse) {
-  use fahrenheit <- decode.then(decode.int32_with_default(1, 0))
-  use message <- decode.then(decode.string_with_default(2, ""))
-  decode.success(TemperatureResponse(fahrenheit: fahrenheit, message: message))
-}
-
-pub fn decode_temperature_response(data: BitArray) -> Result(TemperatureResponse, List(decode.DecodeError)) {
-  decode.run(data, temperature_response_decoder())
-}
-
-pub fn temperature_request_decoder() -> decode.Decoder(TemperatureRequest) {
+pub fn temperature_request_decoder() {
   use id <- decode.then(decode.int32_with_default(1, 0))
   use celsius <- decode.then(decode.int32_with_default(2, 0))
   use location <- decode.then(decode.string_with_default(3, ""))
   use use_cache <- decode.then(decode.bool_with_default(4, False))
   use precision <- decode.then(decode.float(5))
-  decode.success(TemperatureRequest(
-    id: id,
-    celsius: celsius,
-    location: location,
-    use_cache: use_cache,
-    precision: precision,
-  ))
+  decode.success(
+    TemperatureRequest(
+      id: id,
+      celsius: celsius,
+      location: location,
+      use_cache: use_cache,
+      precision: precision,
+    ),
+  )
 }
 
-pub fn decode_temperature_request(data: BitArray) -> Result(TemperatureRequest, List(decode.DecodeError)) {
+
+
+pub fn decode_temperature_request(data: BitArray) {
   decode.run(data, temperature_request_decoder())
 }
+
+
+
+pub type TemperatureResponse {
+  TemperatureResponse(fahrenheit: Int, message: String)
+}
+
+
+
+pub fn encode_temperature_response(temperature_response: TemperatureResponse) {
+  encode.message(
+    [
+      encode.int32_field(1, temperature_response.fahrenheit),
+      encode.string_field(2, temperature_response.message), 
+    ],
+  )
+}
+
+
+
+pub fn temperature_response_decoder() {
+  use fahrenheit <- decode.then(decode.int32_with_default(1, 0))
+  use message <- decode.then(decode.string_with_default(2, ""))
+  decode.success(TemperatureResponse(fahrenheit: fahrenheit, message: message))
+}
+
+
+
+pub fn decode_temperature_response(data: BitArray) {
+  decode.run(data, temperature_response_decoder())
+}
+
+
+
+pub type DeleteRequest {
+  DeleteRequest(id: Int)
+}
+
+
+
+pub fn encode_delete_request(delete_request: DeleteRequest) {
+  encode.message([encode.int32_field(1, delete_request.id)])
+}
+
+
+
+pub fn delete_request_decoder() {
+  use id <- decode.then(decode.int32_with_default(1, 0))
+  decode.success(DeleteRequest(id: id))
+}
+
+
+
+pub fn decode_delete_request(data: BitArray) {
+  decode.run(data, delete_request_decoder())
+}
+
+
+
+pub type DeleteResponse {
+  DeleteResponse(success: Bool, message: String)
+}
+
+
+
+pub fn encode_delete_response(delete_response: DeleteResponse) {
+  encode.message(
+    [
+      encode.bool_field(1, delete_response.success),
+      encode.string_field(2, delete_response.message), 
+    ],
+  )
+}
+
+
+
+pub fn delete_response_decoder() {
+  use success <- decode.then(decode.bool_with_default(1, False))
+  use message <- decode.then(decode.string_with_default(2, ""))
+  decode.success(DeleteResponse(success: success, message: message))
+}
+
+
+
+pub fn decode_delete_response(data: BitArray) {
+  decode.run(data, delete_response_decoder())
+}
+
+
+
+pub type ListRequest {
+  ListRequest(limit: Int, offset: Int)
+}
+
+
+
+pub fn encode_list_request(list_request: ListRequest) {
+  encode.message(
+    [
+      encode.int32_field(1, list_request.limit),
+      encode.int32_field(2, list_request.offset), 
+    ],
+  )
+}
+
+
+
+pub fn list_request_decoder() {
+  use limit <- decode.then(decode.int32_with_default(1, 0))
+  use offset <- decode.then(decode.int32_with_default(2, 0))
+  decode.success(ListRequest(limit: limit, offset: offset))
+}
+
+
+
+pub fn decode_list_request(data: BitArray) {
+  decode.run(data, list_request_decoder())
+}
+
+
+
+pub type ListResponse {
+  ListResponse(temperatures: List(TemperatureResponse), total: Int)
+}
+
+
+
+pub fn encode_list_response(list_response: ListResponse) {
+  {
+    let temperatures_fields =
+      list.map(
+        list_response.temperatures,
+        fn(v: TemperatureResponse) {
+          encode.field(
+            1,
+            wire.LengthDelimited,
+            encode.length_delimited(encode_temperature_response(v)),
+          )
+        },
+      )
+    encode.message(
+      list.flatten(
+        [temperatures_fields, [encode.int32_field(2, list_response.total)]],
+      ),
+    )
+  }
+}
+
+
+
+pub fn list_response_decoder() {
+  use temperatures <- decode.then(
+      decode.repeated_field(
+        1,
+        fn(field: decode.Field) {
+          decode.message_field(_, temperature_response_decoder())(field)
+        },
+      ),
+    )
+  use total <- decode.then(decode.int32_with_default(2, 0))
+  decode.success(ListResponse(temperatures: temperatures, total: total))
+}
+
+
+
+pub fn decode_list_response(data: BitArray) {
+  decode.run(data, list_response_decoder())
+}
+
+
 
 // Service: TemperatureService
 
@@ -192,358 +251,261 @@ pub type TemperatureServiceError {
 /// Layer 2: HTTP adapters (gleam/http types, returns Result for middleware)
 /// 
 /// HTTP adapters return Result(Response, ServiceError) for middleware pattern
-/// Service-level errors for TemperatureService
-/// These can be logged for telemetry before converting to HTTP responses
+
 pub type TemperatureServiceRequestError {
-  /// Failed to decode the protobuf request
   TemperatureServiceDecodeError(String)
-  /// Handler returned an error
   TemperatureServiceHandlerError(TemperatureServiceError)
 }
-/// Service function for GetTemperature
-/// Handles protobuf encoding/decoding, returns encoded response or error
+
+
+
 pub fn get_temperature_service(
   request_bytes: BitArray,
   handler: fn(TemperatureRequest) -> Result(TemperatureResponse, TemperatureServiceError),
-) -> Result(BitArray, TemperatureServiceRequestError) {
-  case decode.run(request_bytes, with: temperature_request_decoder()) {
-    Ok(proto_request) -> {
-      case handler(proto_request) {
+) {
+  case decode.run(request_bytes, temperature_request_decoder()) {
+    Ok(proto_request) -> { case handler(proto_request) {
         Ok(response) -> Ok(encode_temperature_response(response))
         Error(err) -> Error(TemperatureServiceHandlerError(err))
-      }
-    }
-    Error(_) -> Error(TemperatureServiceDecodeError("Failed to decode TemperatureRequest"))
+      } }
+    Error(_) -> Error(
+      TemperatureServiceDecodeError("Failed to decode TemperatureRequest"),
+    )
   }
 }
 
-/// Service function for DeleteTemperature
-/// Handles protobuf encoding/decoding, returns encoded response or error
+
+
 pub fn delete_temperature_service(
   request_bytes: BitArray,
   handler: fn(DeleteRequest) -> Result(DeleteResponse, TemperatureServiceError),
-) -> Result(BitArray, TemperatureServiceRequestError) {
-  case decode.run(request_bytes, with: delete_request_decoder()) {
-    Ok(proto_request) -> {
-      case handler(proto_request) {
+) {
+  case decode.run(request_bytes, delete_request_decoder()) {
+    Ok(proto_request) -> { case handler(proto_request) {
         Ok(response) -> Ok(encode_delete_response(response))
         Error(err) -> Error(TemperatureServiceHandlerError(err))
-      }
-    }
-    Error(_) -> Error(TemperatureServiceDecodeError("Failed to decode DeleteRequest"))
+      } }
+    Error(_) -> Error(
+      TemperatureServiceDecodeError("Failed to decode DeleteRequest"),
+    )
   }
 }
 
-/// Service function for CreateTemperature
-/// Handles protobuf encoding/decoding, returns encoded response or error
+
+
 pub fn create_temperature_service(
   request_bytes: BitArray,
   handler: fn(TemperatureRequest) -> Result(TemperatureResponse, TemperatureServiceError),
-) -> Result(BitArray, TemperatureServiceRequestError) {
-  case decode.run(request_bytes, with: temperature_request_decoder()) {
-    Ok(proto_request) -> {
-      case handler(proto_request) {
+) {
+  case decode.run(request_bytes, temperature_request_decoder()) {
+    Ok(proto_request) -> { case handler(proto_request) {
         Ok(response) -> Ok(encode_temperature_response(response))
         Error(err) -> Error(TemperatureServiceHandlerError(err))
-      }
-    }
-    Error(_) -> Error(TemperatureServiceDecodeError("Failed to decode TemperatureRequest"))
+      } }
+    Error(_) -> Error(
+      TemperatureServiceDecodeError("Failed to decode TemperatureRequest"),
+    )
   }
 }
 
-/// Service function for ListTemperatures
-/// Handles protobuf encoding/decoding, returns encoded response or error
+
+
 pub fn list_temperatures_service(
   request_bytes: BitArray,
   handler: fn(ListRequest) -> Result(ListResponse, TemperatureServiceError),
-) -> Result(BitArray, TemperatureServiceRequestError) {
-  case decode.run(request_bytes, with: list_request_decoder()) {
-    Ok(proto_request) -> {
-      case handler(proto_request) {
+) {
+  case decode.run(request_bytes, list_request_decoder()) {
+    Ok(proto_request) -> { case handler(proto_request) {
         Ok(response) -> Ok(encode_list_response(response))
+        Error(err) -> Error(TemperatureServiceHandlerError(err))
+      } }
+    Error(_) -> Error(
+      TemperatureServiceDecodeError("Failed to decode ListRequest"),
+    )
+  }
+}
+
+
+
+pub fn http_get_temperature(
+  req: request.Request(BitArray),
+  id: String,
+  handler: fn(TemperatureRequest) -> Result(TemperatureResponse, TemperatureServiceError),
+) {
+  case request.get_query(req) {
+    Ok(query_params) -> {
+      let celsius = get_query_param_int(query_params, "celsius", 0)
+      let location = get_query_param_string(query_params, "location", "")
+      let use_cache = get_query_param_bool(query_params, "use_cache", False)
+      let precision = get_query_param_float(query_params, "precision", 0.0)
+      let proto_request =
+        TemperatureRequest(
+          id: id,
+          celsius: celsius,
+          location: location,
+          use_cache: use_cache,
+          precision: precision,
+        )
+      case handler(proto_request) {
+        Ok(response) -> {
+          let response_bytes = encode_temperature_response(response)
+          Ok(
+            response.Response(
+              status: 200,
+              headers: [#("content-type", "application/x-protobuf")],
+              body: response_bytes,
+            ),
+          )
+        }
         Error(err) -> Error(TemperatureServiceHandlerError(err))
       }
     }
-    Error(_) -> Error(TemperatureServiceDecodeError("Failed to decode ListRequest"))
-  }
-}
-/// HTTP adapter for GetTemperature
-/// GET /v1/temperatures/{id}
-/// Uses gleam/http types (server-agnostic)
-/// Returns Result for middleware pattern
-pub fn http_get_temperature(
-  req: request.Request(BitArray),
-  handler: fn(TemperatureRequest) -> Result(TemperatureResponse, TemperatureServiceError),
-) -> Result(response.Response(BitArray), TemperatureServiceRequestError) {
-  // Extract request from query/path parameters
-  case format_query_request_for_get_temperature(req) {
-    Ok(proto_request) -> {
-      // Encode the request to bytes for the service function
-      let request_bytes = encode_temperature_request(proto_request)
-      case get_temperature_service(request_bytes, handler) {
-        Ok(response_bytes) ->
-          Ok(response.Response(
-            status: 200,
-            headers: [#("content-type", "application/x-protobuf")],
-            body: response_bytes,
-          ))
-        Error(service_error) -> Error(service_error)
-      }
-    }
-    Error(_) -> Error(TemperatureServiceDecodeError("Failed to parse query parameters"))
+    Error(_) -> Error(
+      TemperatureServiceDecodeError("Failed to parse query parameters"),
+    )
   }
 }
 
-/// HTTP adapter for DeleteTemperature
-/// DELETE /v1/temperatures/{id}
-/// Uses gleam/http types (server-agnostic)
-/// Returns Result for middleware pattern
+
+
 pub fn http_delete_temperature(
   req: request.Request(BitArray),
+  id: String,
   handler: fn(DeleteRequest) -> Result(DeleteResponse, TemperatureServiceError),
-) -> Result(response.Response(BitArray), TemperatureServiceRequestError) {
-  // Extract request from query/path parameters
-  case format_query_request_for_delete_temperature(req) {
-    Ok(proto_request) -> {
-      // Encode the request to bytes for the service function
-      let request_bytes = encode_delete_request(proto_request)
-      case delete_temperature_service(request_bytes, handler) {
-        Ok(response_bytes) ->
-          Ok(response.Response(
-            status: 200,
-            headers: [#("content-type", "application/x-protobuf")],
-            body: response_bytes,
-          ))
-        Error(service_error) -> Error(service_error)
+) {
+  case request.get_query(req) {
+    Ok(query_params) -> {
+      let proto_request = DeleteRequest(id: id)
+      case handler(proto_request) {
+        Ok(response) -> {
+          let response_bytes = encode_delete_response(response)
+          Ok(
+            response.Response(
+              status: 200,
+              headers: [#("content-type", "application/x-protobuf")],
+              body: response_bytes,
+            ),
+          )
+        }
+        Error(err) -> Error(TemperatureServiceHandlerError(err))
       }
     }
-    Error(_) -> Error(TemperatureServiceDecodeError("Failed to parse query parameters"))
+    Error(_) -> Error(
+      TemperatureServiceDecodeError("Failed to parse query parameters"),
+    )
   }
 }
 
-/// HTTP adapter for CreateTemperature
-/// POST /v1/temperatures
-/// Uses gleam/http types (server-agnostic)
-/// Returns Result for middleware pattern
+
+
 pub fn http_create_temperature(
   req: request.Request(BitArray),
   handler: fn(TemperatureRequest) -> Result(TemperatureResponse, TemperatureServiceError),
-) -> Result(response.Response(BitArray), TemperatureServiceRequestError) {
+) {
   let request_bytes = req.body
   case create_temperature_service(request_bytes, handler) {
-    Ok(response_bytes) ->
-      Ok(response.Response(
+    Ok(response_bytes) -> Ok(
+      response.Response(
         status: 200,
         headers: [#("content-type", "application/x-protobuf")],
         body: response_bytes,
-      ))
+      ),
+    )
     Error(service_error) -> Error(service_error)
   }
 }
 
-/// HTTP adapter for ListTemperatures
-/// GET /v1/temperatures
-/// Uses gleam/http types (server-agnostic)
-/// Returns Result for middleware pattern
+
+
 pub fn http_list_temperatures(
   req: request.Request(BitArray),
   handler: fn(ListRequest) -> Result(ListResponse, TemperatureServiceError),
-) -> Result(response.Response(BitArray), TemperatureServiceRequestError) {
-  // Extract request from query/path parameters
-  case format_query_request_for_list_temperatures(req) {
-    Ok(proto_request) -> {
-      // Encode the request to bytes for the service function
-      let request_bytes = encode_list_request(proto_request)
-      case list_temperatures_service(request_bytes, handler) {
-        Ok(response_bytes) ->
-          Ok(response.Response(
-            status: 200,
-            headers: [#("content-type", "application/x-protobuf")],
-            body: response_bytes,
-          ))
-        Error(service_error) -> Error(service_error)
-      }
-    }
-    Error(_) -> Error(TemperatureServiceDecodeError("Failed to parse query parameters"))
-  }
-}
-/// Map query parameters to TemperatureRequest
-fn format_query_request_for_get_temperature(req: request.Request(BitArray)) -> Result(TemperatureRequest, Nil) {
-  // Extract path parameters from request path
-  let path_params = extract_path_params_from_request(req.path, "/v1/temperatures/{id}")
+) {
   case request.get_query(req) {
-    Ok(params) -> {
-      // Extract and convert each field from parsed query params
-      let id = get_path_param_int(path_params, "id", 0)
-  let celsius = get_query_param_int(params, "celsius", 0)
-  let location = get_query_param_string(params, "location", "")
-  let use_cache = get_query_param_bool(params, "use_cache", False)
-  let precision = get_query_param_float(params, "precision", 0.0)
-      
-      Ok(TemperatureRequest(id: id, celsius: celsius, location: location, use_cache: use_cache, precision: precision))
-    }
-    Error(_) -> {
-      // No query params, create message with defaults
-      case decode.run(<<>>, with: temperature_request_decoder()) {
-        Ok(msg) -> Ok(msg)
-        Error(_) -> Error(Nil)
-      }
-    }
-  }
-}
-
-/// Map query parameters to DeleteRequest
-fn format_query_request_for_delete_temperature(req: request.Request(BitArray)) -> Result(DeleteRequest, Nil) {
-  // Extract path parameters from request path
-  let path_params = extract_path_params_from_request(req.path, "/v1/temperatures/{id}")
-  case request.get_query(req) {
-    Ok(_params) -> {
-      // Extract and convert each field from parsed query params
-      let id = get_path_param_int(path_params, "id", 0)
-      
-      Ok(DeleteRequest(id: id))
-    }
-    Error(_) -> {
-      // No query params, create message with defaults
-      case decode.run(<<>>, with: delete_request_decoder()) {
-        Ok(msg) -> Ok(msg)
-        Error(_) -> Error(Nil)
-      }
-    }
-  }
-}
-
-/// Map query parameters to ListRequest
-fn format_query_request_for_list_temperatures(req: request.Request(BitArray)) -> Result(ListRequest, Nil) {
-  case request.get_query(req) {
-    Ok(params) -> {
-      // Extract and convert each field from parsed query params
-      let limit = get_query_param_int(params, "limit", 0)
-  let offset = get_query_param_int(params, "offset", 0)
-      
-      Ok(ListRequest(limit: limit, offset: offset))
-    }
-    Error(_) -> {
-      // No query params, create message with defaults
-      case decode.run(<<>>, with: list_request_decoder()) {
-        Ok(msg) -> Ok(msg)
-        Error(_) -> Error(Nil)
-      }
-    }
-  }
-}
-
-/// Extract path parameters from request path based on pattern
-/// Example: extract_path_params_from_request("/v1/temperatures/123", "/v1/temperatures/{id}")
-///   returns [("id", "123")]
-fn extract_path_params_from_request(path: String, pattern: String) -> List(#(String, String)) {
-  let path_segments = string.split(path, "/") |> list.filter(fn(s) { s != "" })
-  let pattern_segments = string.split(pattern, "/") |> list.filter(fn(s) { s != "" })
-  extract_params_from_segments(path_segments, pattern_segments, [])
-}
-
-/// Helper to extract parameters by matching path segments with pattern segments
-fn extract_params_from_segments(
-  path_segments: List(String),
-  pattern_segments: List(String),
-  acc: List(#(String, String)),
-) -> List(#(String, String)) {
-  case path_segments, pattern_segments {
-    [], _ -> list.reverse(acc)
-    _, [] -> list.reverse(acc)
-    [path_seg, ..path_rest], [pattern_seg, ..pattern_rest] -> {
-      case string.starts_with(pattern_seg, "{") && string.ends_with(pattern_seg, "}") {
-        True -> {
-          // This is a path parameter
-          let param_name = string.slice(pattern_seg, 1, string.length(pattern_seg) - 2) |> string.lowercase
-          extract_params_from_segments(path_rest, pattern_rest, [#(param_name, path_seg), ..acc])
+    Ok(query_params) -> {
+      let limit = get_query_param_int(query_params, "limit", 0)
+      let offset = get_query_param_int(query_params, "offset", 0)
+      let proto_request = ListRequest(limit: limit, offset: offset)
+      case handler(proto_request) {
+        Ok(response) -> {
+          let response_bytes = encode_list_response(response)
+          Ok(
+            response.Response(
+              status: 200,
+              headers: [#("content-type", "application/x-protobuf")],
+              body: response_bytes,
+            ),
+          )
         }
-        False -> {
-          // This is a literal segment, skip
-          extract_params_from_segments(path_rest, pattern_rest, acc)
-        }
+        Error(err) -> Error(TemperatureServiceHandlerError(err))
       }
     }
+    Error(_) -> Error(
+      TemperatureServiceDecodeError("Failed to parse query parameters"),
+    )
   }
 }
 
-/// Get path parameter as int with default
-fn get_path_param_int(
-  params: List(#(String, String)),
-  key: String,
-  default: Int,
-) -> Int {
-  case list.find(params, fn(p) { p.0 == key }) {
-    Ok(#(_, value)) -> {
-      case int.parse(value) {
-        Ok(i) -> i
-        Error(_) -> default
-      }
-    }
-    Error(_) -> default
-  }
-}
 
-/// Get string query parameter with default
+
 fn get_query_param_string(
   params: List(#(String, String)),
   key: String,
   default: String,
 ) -> String {
-  case list.find(params, fn(p) { p.0 == key }) {
+  case list.find(params, fn(p: #(String, String)) { p.0 == key }) {
     Ok(#(_, value)) -> value
     Error(_) -> default
   }
 }
 
-/// Get int query parameter with default
+
+
 fn get_query_param_int(
   params: List(#(String, String)),
   key: String,
   default: Int,
 ) -> Int {
-  case list.find(params, fn(p) { p.0 == key }) {
-    Ok(#(_, value)) -> {
-      case int.parse(value) {
-        Ok(i) -> i
-        Error(_) -> default
-      }
+  case list.find(params, fn(p: #(String, String)) { p.0 == key }) {
+    Ok(#(_, value)) -> case int.parse(value) {
+      Ok(i) -> i
+      Error(_) -> default
     }
     Error(_) -> default
   }
 }
 
-/// Get bool query parameter with default
+
+
 fn get_query_param_bool(
   params: List(#(String, String)),
   key: String,
   default: Bool,
 ) -> Bool {
-  case list.find(params, fn(p) { p.0 == key }) {
-    Ok(#(_, value)) -> {
-      case string.lowercase(value) {
-        "true" | "1" | "yes" -> True
-        "false" | "0" | "no" -> False
-        _ -> default
-      }
+  case list.find(params, fn(p: #(String, String)) { p.0 == key }) {
+    Ok(#(_, value)) -> case string.lowercase(value) {
+      s if s == "true" || s == "1" || s == "yes" -> True
+      s if s == "false" || s == "0" || s == "no" -> False
+      _ -> default
     }
     Error(_) -> default
   }
 }
 
-/// Get float query parameter with default
+
+
 fn get_query_param_float(
   params: List(#(String, String)),
   key: String,
   default: Float,
 ) -> Float {
-  case list.find(params, fn(p) { p.0 == key }) {
-    Ok(#(_, value)) -> {
-      case float.parse(value) {
-        Ok(f) -> f
-        Error(_) -> default
-      }
+  case list.find(params, fn(p: #(String, String)) { p.0 == key }) {
+    Ok(#(_, value)) -> case float.parse(value) {
+      Ok(f) -> f
+      Error(_) -> default
     }
     Error(_) -> default
   }
 }
+
+

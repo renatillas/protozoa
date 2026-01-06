@@ -1,0 +1,11 @@
+---
+version: 1.5.1
+title: trick_gen_message_with_repeated
+file: ./test/trick_gen_test.gleam
+test_name: generate_message_with_repeated_field_test
+---
+pub type Team {
+  Team(name: String, members: List(String))
+}
+
+

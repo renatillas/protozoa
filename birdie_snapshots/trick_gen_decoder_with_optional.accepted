@@ -1,0 +1,18 @@
+---
+version: 1.5.1
+title: trick_gen_decoder_with_optional
+file: ./test/trick_gen_test.gleam
+test_name: generate_decoder_with_optional_field_test
+---
+pub fn user_decoder() {
+  use id <- decode.then(decode.int64_with_default(1, 0))
+  use nickname <- decode.then(
+      decode.map(
+        decode.optional_field(2, decode.string_field),
+        option.from_result,
+      ),
+    )
+  decode.success(User(id: id, nickname: nickname))
+}
+
+

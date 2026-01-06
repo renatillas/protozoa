@@ -8,7 +8,7 @@ import gleam/int
 import gleam/io
 import gleam/string
 import mist
-import temperature_server/proto/proto
+import temperature_server/proto
 import wisp
 import wisp/wisp_mist
 
@@ -51,14 +51,23 @@ fn handle_request(req: wisp.Request) -> wisp.Response {
 
   case wisp.path_segments(req), req.method {
     // GET /v1/sensors/{sensor_id}/temperatures
-    ["v1", "sensors", _sensor_id, "temperatures"], http.Get ->
-      proto.http_get_temperature(http_req, handle_get_temperature)
+    ["v1", "sensors", sensor_id, "temperatures"], http.Get ->
+      proto.http_get_temperature(http_req, sensor_id, handle_get_temperature)
     // PUT /v1/sensors/{sensor_id}/temperatures
-    ["v1", "sensors", _sensor_id, "temperatures"], http.Put ->
-      proto.http_update_temperature(http_req, handle_update_temperature)
+    ["v1", "sensors", sensor_id, "temperatures"], http.Put ->
+      proto.http_update_temperature(
+        http_req,
+        sensor_id,
+        handle_update_temperature,
+      )
     // DELETE /v1/locations/{location}/sensors/{sensor_id}
-    ["v1", "locations", _location, "sensors", _sensor_id], http.Delete ->
-      proto.http_delete_temperature(http_req, handle_delete_temperature)
+    ["v1", "locations", location, "sensors", sensor_id], http.Delete ->
+      proto.http_delete_temperature(
+        http_req,
+        location,
+        sensor_id,
+        handle_delete_temperature,
+      )
     // POST /v1/temperatures (create)
     ["v1", "temperatures"], http.Post ->
       proto.http_create_temperature(http_req, handle_create_temperature)
@@ -150,9 +159,9 @@ fn handler_error_to_wisp_response(
 // Business logic handlers
 
 fn handle_get_temperature(
-  req: proto.GetTemperatureRequest,
-) -> Result(proto.TemperatureResponse, proto.TemperatureServiceError) {
-  Ok(proto.TemperatureResponse(
+  req: proto.TemperatureGetTemperatureRequest,
+) -> Result(proto.TemperatureTemperatureResponse, proto.TemperatureServiceError) {
+  Ok(proto.TemperatureTemperatureResponse(
     eval: "Sensor "
       <> req.sensor_id
       <> " at "
@@ -164,9 +173,9 @@ fn handle_get_temperature(
 }
 
 fn handle_create_temperature(
-  req: proto.CreateTemperatureRequest,
-) -> Result(proto.TemperatureResponse, proto.TemperatureServiceError) {
-  Ok(proto.TemperatureResponse(
+  req: proto.TemperatureCreateTemperatureRequest,
+) -> Result(proto.TemperatureTemperatureResponse, proto.TemperatureServiceError) {
+  Ok(proto.TemperatureTemperatureResponse(
     eval: "Created temperature: "
       <> int.to_string(req.degrees)
       <> "°"
@@ -181,9 +190,9 @@ fn handle_create_temperature(
 }
 
 fn handle_update_temperature(
-  req: proto.UpdateTemperatureRequest,
-) -> Result(proto.TemperatureResponse, proto.TemperatureServiceError) {
-  Ok(proto.TemperatureResponse(
+  req: proto.TemperatureUpdateTemperatureRequest,
+) -> Result(proto.TemperatureTemperatureResponse, proto.TemperatureServiceError) {
+  Ok(proto.TemperatureTemperatureResponse(
     eval: "Updated sensor "
       <> req.sensor_id
       <> " to "
@@ -198,9 +207,9 @@ fn handle_update_temperature(
 }
 
 fn handle_delete_temperature(
-  req: proto.DeleteTemperatureRequest,
-) -> Result(proto.TemperatureResponse, proto.TemperatureServiceError) {
-  Ok(proto.TemperatureResponse(
+  req: proto.TemperatureDeleteTemperatureRequest,
+) -> Result(proto.TemperatureTemperatureResponse, proto.TemperatureServiceError) {
+  Ok(proto.TemperatureTemperatureResponse(
     eval: "Deleted sensor "
       <> req.sensor_id
       <> " from location "
@@ -211,9 +220,9 @@ fn handle_delete_temperature(
 }
 
 fn handle_list_temperatures(
-  req: proto.ListTemperaturesRequest,
-) -> Result(proto.TemperatureResponse, proto.TemperatureServiceError) {
-  Ok(proto.TemperatureResponse(
+  req: proto.TemperatureListTemperaturesRequest,
+) -> Result(proto.TemperatureTemperatureResponse, proto.TemperatureServiceError) {
+  Ok(proto.TemperatureTemperatureResponse(
     eval: "Listing temperatures for "
       <> req.location
       <> " (limit: "
@@ -227,9 +236,9 @@ fn handle_list_temperatures(
 }
 
 fn handle_search_temperatures(
-  req: proto.SearchTemperaturesRequest,
-) -> Result(proto.TemperatureResponse, proto.TemperatureServiceError) {
-  Ok(proto.TemperatureResponse(
+  req: proto.TemperatureSearchTemperaturesRequest,
+) -> Result(proto.TemperatureTemperatureResponse, proto.TemperatureServiceError) {
+  Ok(proto.TemperatureTemperatureResponse(
     eval: "Searching temperatures between "
       <> int.to_string(req.min_degrees)
       <> "°C and "

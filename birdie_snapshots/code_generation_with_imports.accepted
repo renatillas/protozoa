@@ -23,53 +23,77 @@ pub type BaseStatus {
   INACTIVE
 }
 
+
+
 pub type AppMessage {
-  AppMessage(
-    base: BaseMessage,
-    status: BaseStatus,
+  AppMessage(base: BaseMessage, status: BaseStatus)
+}
+
+
+
+pub fn encode_app_message(app_message: AppMessage) {
+  encode.message(
+    [
+      encode.field(
+        1,
+        wire.LengthDelimited,
+        encode.length_delimited(encode_base_message(app_message.base)),
+      ),
+      encode.field(
+        2,
+        wire.LengthDelimited,
+        encode.length_delimited(encode_base_status(app_message.status)),
+      ), 
+    ],
   )
 }
 
-pub type BaseMessage {
-  BaseMessage(
-    id: String,
-    status: BaseStatus,
-  )
-}
 
-pub fn encode_app_message(app_message: AppMessage) -> BitArray {
-  encode.message([
-    encode.field(1, wire.LengthDelimited, encode.length_delimited(encode_base_message(app_message.base))),
-    encode.int32_field(2, encode_base_status_value(app_message.status)),
-  ])
-}
 
-pub fn encode_base_message(base_message: BaseMessage) -> BitArray {
-  encode.message([
-    encode.string_field(1, base_message.id),
-    encode.int32_field(2, encode_base_status_value(base_message.status)),
-  ])
-}
-
-pub fn app_message_decoder() -> decode.Decoder(AppMessage) {
+pub fn app_message_decoder() {
   use base <- decode.then(decode.nested_message(1, base_message_decoder()))
-  use status <- decode.then(decode_base_status_field(2))
+  use status <- decode.then(decode.nested_message(2, base_status_decoder()))
   decode.success(AppMessage(base: base, status: status))
 }
 
-pub fn decode_app_message(data: BitArray) -> Result(AppMessage, List(decode.DecodeError)) {
+
+
+pub fn decode_app_message(data: BitArray) {
   decode.run(data, app_message_decoder())
 }
 
-pub fn base_message_decoder() -> decode.Decoder(BaseMessage) {
+
+
+pub type BaseMessage {
+  BaseMessage(id: String, status: BaseStatus)
+}
+
+
+
+pub fn encode_base_message(base_message: BaseMessage) {
+  encode.message(
+    [
+      encode.string_field(1, base_message.id),
+      encode.int32_field(2, encode_status_value(base_message.status)), 
+    ],
+  )
+}
+
+
+
+pub fn base_message_decoder() {
   use id <- decode.then(decode.string_with_default(1, ""))
-  use status <- decode.then(decode_base_status_field(2))
+  use status <- decode.then(decode_status_field(2))
   decode.success(BaseMessage(id: id, status: status))
 }
 
-pub fn decode_base_message(data: BitArray) -> Result(BaseMessage, List(decode.DecodeError)) {
+
+
+pub fn decode_base_message(data: BitArray) {
   decode.run(data, base_message_decoder())
 }
+
+
 
 pub fn encode_base_status_value(value: BaseStatus) -> Int {
   case value {
@@ -80,30 +104,32 @@ pub fn encode_base_status_value(value: BaseStatus) -> Int {
 }
 
 pub fn decode_base_status_field(field_num: Int) -> decode.Decoder(BaseStatus) {
-  decode.field(field_num, fn(field) {
-    use value <- result.try(decode.int32_field(field))
+  decode.enum_field(field_num, fn(value) {
     case value {
-          0 -> Ok(UNKNOWN)
-          1 -> Ok(ACTIVE)
-          2 -> Ok(INACTIVE)
-      _ -> Error(decode.DecodeError(expected: "valid base_status value", found: "Unknown base_status value: " <> string.inspect(value), path: []))
+      0 -> Ok(UNKNOWN)
+      1 -> Ok(ACTIVE)
+      2 -> Ok(INACTIVE)
+      _ -> Error(decode.DecodeError(
+        expected: "valid BaseStatus value",
+        found: "Unknown enum value: " <> int.to_string(value),
+        path: [],
+      ))
     }
   })
-}
-
-pub fn decode_base_status_value(value: Int) -> Result(BaseStatus, String) {
-  case value {
-    0 -> Ok(UNKNOWN)
-    1 -> Ok(ACTIVE)
-    2 -> Ok(INACTIVE)
-    _ -> Error("Unknown base_status value: " <> int.to_string(value))
-  }
 }
 
 pub fn decode_repeated_base_status(field_num: Int) -> decode.Decoder(List(BaseStatus)) {
   decode.repeated_field(field_num, fn(field) {
     use value <- result.try(decode.int32_field(field))
-    decode_base_status_value(value)
-    |> result.map_error(fn(err) { decode.DecodeError(expected: "base_status", found: err, path: []) })
+    case value {
+      0 -> Ok(UNKNOWN)
+      1 -> Ok(ACTIVE)
+      2 -> Ok(INACTIVE)
+      _ -> Error(decode.DecodeError(
+        expected: "valid BaseStatus value",
+        found: "Unknown enum value: " <> int.to_string(value),
+        path: [],
+      ))
+    }
   })
 }

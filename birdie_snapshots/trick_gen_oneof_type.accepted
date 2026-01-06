@@ -1,0 +1,12 @@
+---
+version: 1.5.1
+title: trick_gen_oneof_type
+file: ./test/trick_gen_test.gleam
+test_name: generate_oneof_type_test
+---
+pub type ResponseResult {
+  Success(value: String)
+  Error(value: String)
+}
+
+

@@ -1,0 +1,12 @@
+---
+version: 1.5.1
+title: trick_gen_imports
+file: ./test/trick_gen_test.gleam
+test_name: generate_import_statements_test
+---
+import gleam/option
+import gleam/list
+import gleam/dict
+import gleam/result
+import protozoa/encode.{encode}
+import protozoa/decode.{decode}

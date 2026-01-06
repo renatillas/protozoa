@@ -1,0 +1,43 @@
+---
+version: 1.5.1
+title: trick_gen_complete_message_with_oneof
+file: ./test/trick_gen_test.gleam
+test_name: generate_complete_message_with_oneof_test
+---
+pub type Response {
+  Response(result: Option(ResponseResult))
+}
+
+
+
+pub type ResponseResult {
+  Success(value: String)
+  Error(value: String)
+}
+
+
+
+pub fn encode_response(response: Response) {
+  encode.message([case response.result {
+        Some(oneof_value) -> case oneof_value {
+          Success(value) -> encode.string_field(1, value)
+          Error(value) -> encode.string_field(2, value)
+        }
+        None -> <<>>
+      }])
+}
+
+
+
+pub fn response_decoder() {
+  use result <- decode.then(oneof_result_decoder())
+  decode.success(Response(result: result))
+}
+
+
+
+pub fn decode_response(data: BitArray) {
+  decode.run(data, response_decoder())
+}
+
+

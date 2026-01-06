@@ -1,0 +1,14 @@
+---
+version: 1.5.1
+title: trick_gen_encoder_with_optional
+file: ./test/trick_gen_test.gleam
+test_name: generate_encoder_with_optional_field_test
+---
+pub fn encode_user(user: User) {
+  encode.message([encode.int64_field(1, user.id), case user.nickname {
+        Some(value) -> encode.string_field(2, value)
+        None -> <<>>
+      }])
+}
+
+

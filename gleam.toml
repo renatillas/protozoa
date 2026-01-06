@@ -18,6 +18,7 @@ justin = ">= 1.0.0 and < 2.0.0"
 gleam_http = ">= 4.2.0 and < 5.0.0"
 gleam_regexp = ">= 1.1.1 and < 2.0.0"
 nibble = ">= 1.1.4 and < 2.0.0"
+trick = { path = "../trick-fork" }
 
 [dev-dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"

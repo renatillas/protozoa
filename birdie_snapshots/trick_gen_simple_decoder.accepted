@@ -1,0 +1,13 @@
+---
+version: 1.5.1
+title: trick_gen_simple_decoder
+file: ./test/trick_gen_test.gleam
+test_name: generate_simple_decoder_test
+---
+pub fn person_decoder() {
+  use name <- decode.then(decode.string_with_default(1, ""))
+  use age <- decode.then(decode.int32_with_default(2, 0))
+  decode.success(Person(name: name, age: age))
+}
+
+

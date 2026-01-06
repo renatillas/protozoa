@@ -1,0 +1,13 @@
+---
+version: 1.5.1
+title: trick_gen_decoder_with_repeated
+file: ./test/trick_gen_test.gleam
+test_name: generate_decoder_with_repeated_field_test
+---
+pub fn team_decoder() {
+  use name <- decode.then(decode.string_with_default(1, ""))
+  use members <- decode.then(decode.repeated_string(2))
+  decode.success(Team(name: name, members: members))
+}
+
+

@@ -1,0 +1,17 @@
+---
+version: 1.5.1
+title: trick_gen_encoder_with_repeated
+file: ./test/trick_gen_test.gleam
+test_name: generate_encoder_with_repeated_field_test
+---
+pub fn encode_team(team: Team) {
+  {
+    let members_fields =
+      list.map(team.members, fn(v: String) { encode.string_field(2, v) })
+    encode.message(
+      list.flatten([members_fields, [encode.string_field(1, team.name)]]),
+    )
+  }
+}
+
+
