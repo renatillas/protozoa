@@ -264,7 +264,7 @@ fn oneof_checks(fields: List(proto.Field)) -> String {
       <> "          Ok(value) -> Ok(option.Some("
       <> variant_name
       <> "(value)))\n"
-      <> "          Error(_) -> Ok(option.None)\n"
+      <> "          Error(err) -> Error([err])\n"
       <> "        }\n"
       <> "      }\n"
       <> "      _ -> Ok(option.None)\n"
@@ -285,9 +285,7 @@ fn oneof_checks(fields: List(proto.Field)) -> String {
       <> "          Ok(value) -> Ok(option.Some("
       <> variant_name
       <> "(value)))\n"
-      <> "          Error(_) -> {\n"
-      <> oneof_checks(rest)
-      <> "          }\n"
+      <> "          Error(err) -> Error([err])\n"
       <> "        }\n"
       <> "      }\n"
       <> "      _ -> {\n"
@@ -440,9 +438,9 @@ fn optional_decoder(inner_type: Type, field_num: String) -> String {
     proto.MessageType(name) ->
       "decode.map(decode.optional_nested_message("
       <> field_num
-      <> ", "
+      <> ", decode.defer("
       <> justin.snake_case(flatten_type_name(name))
-      <> "_decoder()), option.from_result)"
+      <> "_decoder)), option.from_result)"
     _ ->
       "decode.map(decode.optional_field("
       <> field_num

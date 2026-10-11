@@ -2,7 +2,6 @@
 ///
 /// This module generates Gleam code from the proto files in protofiles/
 /// and writes them to src/ so they can be compiled and tested.
-
 import gleam/dict
 import gleam/result
 import protozoa/internal/codegen
@@ -111,6 +110,57 @@ message Container {
 }
 "
 
+const presence_proto = "syntax = \"proto3\";
+package presence;
+enum State {
+  UNKNOWN = 0;
+}
+message Shadow {
+  message State {
+  }
+  State state = 1;
+  optional State explicit_state = 2;
+}
+message Child {
+  string value = 1;
+}
+message Empty {
+}
+message Parent {
+  Child child = 1;
+  Empty empty = 2;
+  optional Child explicit_child = 3;
+}
+message Recursive {
+  Recursive next = 1;
+}
+message MutualA {
+  MutualB next = 1;
+}
+message MutualB {
+  MutualA next = 1;
+}
+message Nested {
+  message Leaf {
+  }
+  Leaf leaf = 1;
+}
+message Choice {
+  oneof selected {
+    Empty empty = 1;
+    Child child = 2;
+  }
+}
+message SingleChoice {
+  oneof single_selected {
+    Empty only = 1;
+  }
+}
+message Collection {
+  repeated Empty items = 1;
+  map<string, Empty> values = 2;
+}
+"
 
 pub type GenerateError {
   ResolveError(String)
@@ -135,7 +185,9 @@ pub fn generate_app_code() -> Result(String, GenerateError) {
 
   use resolver <- result.try(
     import_resolver.resolve(sources, "app.proto")
-    |> result.map_error(fn(e) { ResolveError(import_resolver.describe_error(e)) }),
+    |> result.map_error(fn(e) {
+      ResolveError(import_resolver.describe_error(e))
+    }),
   )
 
   let registry = import_resolver.get_type_registry(resolver)
@@ -155,7 +207,9 @@ pub fn generate_service_code() -> Result(String, GenerateError) {
 
   use resolver <- result.try(
     import_resolver.resolve(sources, "service.proto")
-    |> result.map_error(fn(e) { ResolveError(import_resolver.describe_error(e)) }),
+    |> result.map_error(fn(e) {
+      ResolveError(import_resolver.describe_error(e))
+    }),
   )
 
   let registry = import_resolver.get_type_registry(resolver)
@@ -175,7 +229,9 @@ pub fn generate_types_code() -> Result(String, GenerateError) {
 
   use resolver <- result.try(
     import_resolver.resolve(sources, "types.proto")
-    |> result.map_error(fn(e) { ResolveError(import_resolver.describe_error(e)) }),
+    |> result.map_error(fn(e) {
+      ResolveError(import_resolver.describe_error(e))
+    }),
   )
 
   let registry = import_resolver.get_type_registry(resolver)
@@ -195,7 +251,9 @@ pub fn generate_nested_code() -> Result(String, GenerateError) {
 
   use resolver <- result.try(
     import_resolver.resolve(sources, "nested.proto")
-    |> result.map_error(fn(e) { ResolveError(import_resolver.describe_error(e)) }),
+    |> result.map_error(fn(e) {
+      ResolveError(import_resolver.describe_error(e))
+    }),
   )
 
   let registry = import_resolver.get_type_registry(resolver)
@@ -207,17 +265,54 @@ pub fn generate_nested_code() -> Result(String, GenerateError) {
   |> result.map_error(fn(e) { CodegenError(e) })
 }
 
+pub fn generate_presence_code() -> Result(String, GenerateError) {
+  let sources =
+    dict.from_list([#("presence.proto", import_resolver.Raw(presence_proto))])
+  use resolver <- result.try(
+    import_resolver.resolve(sources, "presence.proto")
+    |> result.map_error(fn(e) {
+      ResolveError(import_resolver.describe_error(e))
+    }),
+  )
+  codegen.generate(
+    files: import_resolver.get_all_loaded_files(resolver) |> to_paths(),
+    registry: import_resolver.get_type_registry(resolver),
+  )
+  |> result.map_error(fn(e) { CodegenError(e) })
+}
+
+pub fn main() {
+  let assert Ok(_) = write_all_generated_code(".")
+}
+
 /// Write all generated code to src/ directory
 pub fn write_all_generated_code(base_path: String) -> Result(Nil, GenerateError) {
   use app_code <- result.try(generate_app_code())
   use service_code <- result.try(generate_service_code())
   use types_code <- result.try(generate_types_code())
   use nested_code <- result.try(generate_nested_code())
+  use presence_code <- result.try(generate_presence_code())
 
-  use _ <- result.try(write_file(base_path <> "/src/generated_app.gleam", app_code))
-  use _ <- result.try(write_file(base_path <> "/src/generated_service.gleam", service_code))
-  use _ <- result.try(write_file(base_path <> "/src/generated_types.gleam", types_code))
-  use _ <- result.try(write_file(base_path <> "/src/generated_nested.gleam", nested_code))
+  use _ <- result.try(write_file(
+    base_path <> "/src/generated_app.gleam",
+    app_code,
+  ))
+  use _ <- result.try(write_file(
+    base_path <> "/src/generated_service.gleam",
+    service_code,
+  ))
+  use _ <- result.try(write_file(
+    base_path <> "/src/generated_types.gleam",
+    types_code,
+  ))
+  use _ <- result.try(write_file(
+    base_path <> "/src/generated_nested.gleam",
+    nested_code,
+  ))
+  use _ <- result.try(write_file(
+    base_path <> "/src/generated_presence.gleam",
+    presence_code,
+  ))
 
   Ok(Nil)
 }

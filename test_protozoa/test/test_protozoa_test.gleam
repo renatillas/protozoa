@@ -10,8 +10,10 @@ import generated_service.{
 }
 import generated_types.{
   TypesAllTypes, TypesRepeatedTypes, decode_types_all_types,
-  decode_types_repeated_types, encode_types_all_types, encode_types_repeated_types,
+  decode_types_repeated_types, encode_types_all_types,
+  encode_types_repeated_types,
 }
+import gleam/option.{Some}
 import gleeunit
 
 pub fn main() {
@@ -31,13 +33,14 @@ pub fn base_message_roundtrip_test() {
 
 pub fn app_message_with_nested_roundtrip_test() {
   let base = BaseBaseMessage(id: "nested-id", status: ACTIVE)
-  let app = AppAppMessage(base: base, status: ACTIVE)
+  let app = AppAppMessage(base: Some(base), status: ACTIVE)
 
   let encoded = encode_app_app_message(app)
   let assert Ok(decoded) = decode_app_app_message(encoded)
 
-  let assert "nested-id" = decoded.base.id
-  let assert ACTIVE = decoded.base.status
+  let assert Some(decoded_base) = decoded.base
+  let assert "nested-id" = decoded_base.id
+  let assert ACTIVE = decoded_base.status
   let assert ACTIVE = decoded.status
 }
 

@@ -60,6 +60,19 @@ pub fn decode_user(data: BitArray) -> Result(User, List(decode.DecodeError)) {
 
 ## Supported Features
 
+### Generated message presence
+
+Singular message fields use `option.Option(Message)` even without an `optional`
+label, as required by [proto3 field presence](https://protobuf.dev/programming-guides/field_presence/).
+`None` means the field is absent; `Some(message)` means it is present, including
+when the nested message is empty. Repeated message fields, map values, and
+oneof payloads retain their existing types.
+
+When regenerating code previously emitted with mandatory singular message
+fields, update constructors to use `Some(message)` or `None`. Recursive message
+decoders are deferred until the field is decoded. Malformed present optional
+fields and oneof members return decode errors rather than being treated as absent.
+
 ### Protocol Buffer Features
 
 | Feature | Support | Description |

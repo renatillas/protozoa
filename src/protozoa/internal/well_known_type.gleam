@@ -470,7 +470,11 @@ fn type_proto() -> file.ProtoFile {
     syntax: "proto3",
     package: option.Some("google.protobuf"),
     imports: [
-      proto.Import(path: "google/protobuf/any.proto", public: False, weak: False),
+      proto.Import(
+        path: "google/protobuf/any.proto",
+        public: False,
+        weak: False,
+      ),
       proto.Import(
         path: "google/protobuf/source_context.proto",
         public: False,
@@ -771,7 +775,11 @@ fn api_proto() -> file.ProtoFile {
         public: False,
         weak: False,
       ),
-      proto.Import(path: "google/protobuf/type.proto", public: False, weak: False),
+      proto.Import(
+        path: "google/protobuf/type.proto",
+        public: False,
+        weak: False,
+      ),
     ],
     messages: [
       // Api message

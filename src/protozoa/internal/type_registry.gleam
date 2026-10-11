@@ -228,7 +228,7 @@ pub fn resolve_type_reference(
     // 2. In current package
     make_fully_qualified_name(current_package, type_name),
     // 3. Nested type in current package (e.g., Message.NestedMessage)
-    ..resolve_nested_type_candidates(type_name, current_package, registry),
+    ..resolve_nested_type_candidates(type_name, current_package, registry)
   ]
 
   case

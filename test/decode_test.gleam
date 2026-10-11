@@ -522,8 +522,8 @@ pub fn optional_field_with_invalid_data_test() {
   let string_encoded = encode.string_field(1, "hello")
   let optional_int_decoder = decode.optional_field(1, decode.varint_field)
 
-  // Should return Ok(Error(Nil)) for invalid data in optional field
-  let assert Ok(Error(Nil)) =
+  // A present field with invalid data is not an absent optional field.
+  let assert Error([decode.DecodeError(_, _, _)]) =
     decode.run(string_encoded, with: optional_int_decoder)
 }
 

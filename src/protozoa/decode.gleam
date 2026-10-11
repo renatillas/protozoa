@@ -175,7 +175,8 @@ pub fn field(
 
 /// Decode an optional field.
 /// Returns Ok(Ok(value)) if the field is present and valid,
-/// Ok(Error(Nil)) if the field is missing or invalid.
+/// Ok(Error(Nil)) if the field is missing. A malformed present value is a
+/// decoding error, not an absent field.
 /// 
 /// ## Examples
 /// 
@@ -189,10 +190,9 @@ pub fn optional_field(
   Decoder(fn(fields) {
     case dict.get(fields, number) {
       Ok([field, ..]) -> {
-        case decoder(field) {
-          Ok(value) -> Ok(Ok(value))
-          Error(_) -> Ok(Error(Nil))
-        }
+        decoder(field)
+        |> result.map(Ok)
+        |> result.map_error(fn(error) { [error] })
       }
       Ok([]) -> Ok(Error(Nil))
       Error(_) -> Ok(Error(Nil))
@@ -597,12 +597,23 @@ pub fn nested_message(number: Int, decoder: Decoder(a)) -> Decoder(a) {
   field(number, fn(f) { message_field(f, decoder) })
 }
 
+/// Construct a decoder only when it is run. This allows recursive message
+/// definitions without recursively constructing their decoders up front.
+pub fn defer(make_decoder: fn() -> Decoder(a)) -> Decoder(a) {
+  Decoder(fn(fields) {
+    let Decoder(run_decoder) = make_decoder()
+    run_decoder(fields)
+  })
+}
+
 /// Decoder for optional nested message fields.
+/// A missing field returns `Ok(Error(Nil))`; malformed present messages remain
+/// decoding errors rather than being silently treated as absent.
 pub fn optional_nested_message(
   number: Int,
   decoder: Decoder(a),
 ) -> Decoder(Result(a, Nil)) {
-  optional_field(number, fn(f) { message_field(f, decoder) })
+  optional_field(number, fn(field) { message_field(field, decoder) })
 }
 
 // Builder pattern combinators - removed as they don't work well with Gleam's type system
